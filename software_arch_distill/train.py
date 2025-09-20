@@ -53,7 +53,7 @@ processed_data = dataset.map(extract_fields, remove_columns=dataset.column_names
 # 3️⃣ Tokenizer
 # -------------------------------
 student_model_name = "Qwen/Qwen3-4B-Thinking-2507"
-teacher_model_name = "moonshotai/Kimi-K2-Instruct"
+teacher_model_name = "moonshotai/Kimi-K2-Instruct-fp16"
 
 # Student tokenizer (normal)
 tokenizer = AutoTokenizer.from_pretrained(student_model_name)
@@ -61,7 +61,7 @@ tokenizer = AutoTokenizer.from_pretrained(student_model_name)
 # Teacher tokenizer (custom code required)
 teacher_tokenizer = AutoTokenizer.from_pretrained(
     teacher_model_name,
-    torch_dtype=torch.float16,   # force FP16
+    torch_dtype=torch.bfloat16,   # ✅ A100 runs BF16 very well
     trust_remote_code=True
 )
 
