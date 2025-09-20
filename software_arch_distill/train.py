@@ -73,7 +73,7 @@ MAX_LENGTH = 512
 # -------------------------------
 class ArchitectureDataset(Dataset):
     def __init__(self, examples, tokenizer, max_length=512):
-        self.examples = examples  # renamed to avoid conflict with Dataset attributes
+        self.examples = examples
         self.tokenizer = tokenizer
         self.max_length = max_length
 
@@ -81,11 +81,16 @@ class ArchitectureDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, idx):
+        # ✅ Handle case where DataLoader passes a list of indices
+        if isinstance(idx, list):
+            return [self._process_one(i) for i in idx]
+        return self._process_one(idx)
+
+    def _process_one(self, idx):
         item = self.examples[idx]
         input_text = item.get('input', "")
         output_text = item.get('output', "")
 
-        # Tokenize input and output
         inputs = self.tokenizer(
             input_text,
             truncation=True,
@@ -102,14 +107,11 @@ class ArchitectureDataset(Dataset):
         )
 
         return {
-            'input_ids': inputs.input_ids.squeeze(),
-            'attention_mask': inputs.attention_mask.squeeze(),
-            'labels': outputs.input_ids.squeeze()
+            'input_ids': inputs.input_ids.squeeze(0),
+            'attention_mask': inputs.attention_mask.squeeze(0),
+            'labels': outputs.input_ids.squeeze(0)
         }
 
-# ✅ Convert Hugging Face Dataset to list before passing
-train_dataset = ArchitectureDataset(processed_data.to_list(), tokenizer, MAX_LENGTH)
-train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 
 
 # -------------------------------
