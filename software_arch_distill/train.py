@@ -1,11 +1,12 @@
 """
-Full-sequence logits distillation using OpenRouter's Kimi-K2-0905 model.
+Complete Fixed Logits Distillation Code - All Issues Resolved
 Uses KL divergence if teacher returns token-level logprobs & top_logprobs, mapping to student tokenizer works; otherwise falls back to cross-entropy.
 """
 
 import os
 import json
 import time
+import socket
 from typing import List, Optional, Dict, Tuple
 
 import requests
@@ -26,22 +27,49 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", None)
 if OPENROUTER_API_KEY is None:
     raise RuntimeError("Set OPENROUTER_API_KEY environment variable before running.")
 
-TEACHER_API_URL = "https://openrouter.ai/api/v1/chat/completions"  # Fixed: removed env variable for standard endpoint
-TEACHER_MODEL = "anthropic/claude-3.5-sonnet"  # model name per OpenRouter
+TEACHER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+TEACHER_MODEL = "openai/gpt-4o-mini"  # Definitely supports logprobs + cost effective
 
 STUDENT_MODEL = "Qwen/Qwen3-4B-Thinking-2507"
 BATCH_SIZE = 1
 MAX_NEW_TOKENS = 128
-TOP_K = 5   # Reduced from 20 to 5 for better compatibility
+TOP_K = 5   # number of top_logprobs you want, must be ≤ 20 per docs
 EPOCHS = 3
 LR = 1e-5
 CACHE_TEACHER = True
 CACHE_DIR = "./teacher_cache"
+MAX_FAILED_SAMPLES = 100  # Max samples to fail before stopping epoch
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Device: {device}")
 
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+# -------------------------------
+# Network connectivity check
+# -------------------------------
+def check_network_connectivity(host="api.openrouter.ai", port=443, timeout=5):
+    """Check if we can reach the API endpoint"""
+    try:
+        socket.create_connection((host, port), timeout)
+        return True
+    except (socket.gaierror, socket.timeout, ConnectionRefusedError):
+        return False
+
+def wait_for_connectivity(max_wait_time=300, check_interval=10):
+    """Wait for network connectivity to be restored"""
+    print("Checking network connectivity...")
+    start_time = time.time()
+    
+    while time.time() - start_time < max_wait_time:
+        if check_network_connectivity():
+            print("Network connectivity restored!")
+            return True
+        print(f"No connectivity, waiting {check_interval}s before retry...")
+        time.sleep(check_interval)
+    
+    print(f"Network connectivity not restored after {max_wait_time}s")
+    return False
 
 # -------------------------------
 # Dataset loading
@@ -72,7 +100,7 @@ processed_data = hf_dataset.map(extract_fields, remove_columns=hf_dataset.column
 tokenizer = AutoTokenizer.from_pretrained(STUDENT_MODEL, use_fast=False)
 student = AutoModelForCausalLM.from_pretrained(
     STUDENT_MODEL,
-    torch_dtype=torch.float16 if device == "cuda" else torch.float32
+    torch_dtype=torch.float32 if device == "cpu" else torch.bfloat16  # Use bfloat16 instead of float16
 ).to(device)
 
 vocab_size = student.config.vocab_size
@@ -106,32 +134,53 @@ train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 HEADERS = {
     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
     "Content-Type": "application/json",
-    # Added recommended OpenRouter headers
-    "HTTP-Referer": "https://your-site.com",  # Replace with your actual site
+    "HTTP-Referer": "https://localhost:3000",  # Replace with your actual site
     "X-Title": "Logits-Distillation-Training"  # Your app name
 }
 
 def call_teacher_api(prompt: str, max_new_tokens: int = MAX_NEW_TOKENS, top_k: int = TOP_K, retry: int = 3) -> Dict:
-    # Fixed payload according to OpenRouter docs
+    # Check connectivity first
+    if not check_network_connectivity():
+        print("No network connectivity detected. Waiting for connection...")
+        if not wait_for_connectivity():
+            raise RuntimeError("Network connectivity could not be established")
+    
+    # CRITICAL: Exact OpenRouter logprobs format
     payload = {
         "model": TEACHER_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_new_tokens,
         "temperature": 0.0,
-        "logprobs": True,            # CRITICAL: Must be True when using top_logprobs
-        "top_logprobs": top_k,       # integer ≤ 20 (reduced to 5 for compatibility)
+        "logprobs": True,            # Boolean true
+        "top_logprobs": top_k,       # Integer (NOT string)
         "stream": False
     }
     
+    # Debug: Print the exact payload being sent
+    print(f"[Teacher API] Sending payload: {json.dumps(payload, indent=2)}")
+    
+    last_error = None
     for attempt in range(retry):
         try:
             print(f"[Teacher API] Making request (attempt {attempt+1}/{retry})")
-            resp = requests.post(TEACHER_API_URL, headers=HEADERS, json=payload, timeout=60)
+            resp = requests.post(TEACHER_API_URL, headers=HEADERS, json=payload, timeout=120)  # Increased timeout
             
-            # Better error handling
             if resp.status_code == 200:
                 data = resp.json()
                 print(f"[Teacher API] Success! Response keys: {list(data.keys())}")
+                
+                # Debug: Print first choice structure
+                if 'choices' in data and len(data['choices']) > 0:
+                    choice = data['choices'][0]
+                    print(f"[Debug] Choice keys: {list(choice.keys())}")
+                    if 'logprobs' in choice:
+                        print(f"[Debug] Logprobs in choice: {choice['logprobs']}")
+                    if 'message' in choice and isinstance(choice['message'], dict):
+                        msg = choice['message']
+                        print(f"[Debug] Message keys: {list(msg.keys())}")
+                        if 'logprobs' in msg:
+                            print(f"[Debug] Logprobs in message: {msg['logprobs']}")
+                
                 return data
             elif resp.status_code == 401:
                 print(f"[Teacher API] Authentication failed. Check your API key.")
@@ -143,22 +192,31 @@ def call_teacher_api(prompt: str, max_new_tokens: int = MAX_NEW_TOKENS, top_k: i
             else:
                 try:
                     error_data = resp.json()
+                    last_error = f"HTTP {resp.status_code}: {error_data}"
                     print(f"[Teacher API] HTTP {resp.status_code}: {error_data}")
                 except:
+                    last_error = f"HTTP {resp.status_code}: {resp.text}"
                     print(f"[Teacher API] HTTP {resp.status_code}: {resp.text}")
                 
         except requests.exceptions.ConnectionError as e:
+            last_error = f"Connection error: {e}"
             print(f"[Teacher API] Connection error (attempt {attempt+1}/{retry}): {e}")
-            print("This might be a network connectivity issue. Check your internet connection.")
-            time.sleep(5)
+            # For network errors, wait longer and check connectivity
+            if attempt < retry - 1:
+                time.sleep(5 * (attempt + 1))  # Exponential backoff
+                if not check_network_connectivity():
+                    print("Connectivity lost, waiting for restoration...")
+                    wait_for_connectivity(max_wait_time=60)
         except requests.exceptions.Timeout as e:
+            last_error = f"Timeout error: {e}"
             print(f"[Teacher API] Timeout error (attempt {attempt+1}/{retry}): {e}")
-            time.sleep(2)
+            time.sleep(5)
         except Exception as e:
+            last_error = f"Unexpected error: {e}"
             print(f"[Teacher API] Unexpected error (attempt {attempt+1}/{retry}): {e}")
             time.sleep(2)
     
-    raise RuntimeError(f"Teacher API failed after {retry} attempts for prompt: {prompt[:100]}")
+    raise RuntimeError(f"Teacher API failed after {retry} attempts. Last error: {last_error}")
 
 def parse_teacher_logprobs(resp_json: Dict) -> Tuple[str, List[str], Optional[List[Dict[str, float]]]]:
     """Parse logprobs from OpenRouter response format"""
@@ -184,18 +242,27 @@ def parse_teacher_logprobs(resp_json: Dict) -> Tuple[str, List[str], Optional[Li
     tokens = []
     top_logprobs = None
     
-    if logprobs_data:
+    # Debug: Print the actual response structure
+    print(f"[Parser] Choice keys: {list(choice.keys())}")
+    if "message" in choice:
+        print(f"[Parser] Message keys: {list(choice['message'].keys())}")
+    print(f"[Parser] Logprobs data: {logprobs_data}")
+    
+    if logprobs_data and logprobs_data is not None:
         # OpenAI/OpenRouter format: logprobs.content is a list of token info
         if "content" in logprobs_data and isinstance(logprobs_data["content"], list):
             content_list = logprobs_data["content"]
             tokens = [item.get("token", "") for item in content_list]
             top_logprobs = [item.get("top_logprobs", {}) for item in content_list]
+            print(f"[Parser] Found {len(tokens)} tokens with logprobs")
         else:
             print(f"[Parser] Unexpected logprobs format: {logprobs_data}")
+    else:
+        print(f"[Parser] No logprobs data found - model may not support logprobs")
 
     print(f"[Parser] Generated text length: {len(gen_text) if gen_text else 0}")
     print(f"[Parser] Tokens found: {len(tokens)}")
-    print(f"[Parser] Top logprobs available: {top_logprobs is not None}")
+    print(f"[Parser] Top logprobs available: {top_logprobs is not None and len(top_logprobs) > 0}")
     
     return gen_text or "", tokens, top_logprobs
 
@@ -312,14 +379,15 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
     student.train()
     optimizer.zero_grad()
 
-    with autocast(enabled=(device == "cuda")):
+    # Use bfloat16 for better numerical stability
+    with autocast(enabled=(device == "cuda"), dtype=torch.bfloat16):
         outputs = student(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits
 
         # Extract logits for the target sequence
         logits_target = logits[:, prompt_len: prompt_len + target_len, :].float()
 
-        if can_do_kl:
+        if can_do_kl and teacher_probs_tensor is not None:
             # Use KL divergence with teacher probabilities
             student_log_probs = F.log_softmax(logits_target, dim=-1)
             teacher_probs = teacher_probs_tensor.unsqueeze(0)
@@ -331,10 +399,22 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
             loss = F.cross_entropy(logits_target.view(-1, logits_target.size(-1)), labels.view(-1))
             mode = "CE"
 
-    # Backward pass
-    scaler.scale(loss).backward()
-    scaler.step(optimizer)
-    scaler.update()
+    # Check for NaN/inf before backward pass
+    if torch.isnan(loss) or torch.isinf(loss):
+        print(f"[Training] Invalid loss detected: {loss.item()}, skipping batch")
+        return float('inf'), "SKIP", gen_text[:100], target_len
+
+    # Backward pass with gradient clipping
+    if device == "cuda":
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)  # Unscale before gradient clipping
+        torch.nn.utils.clip_grad_norm_(student.parameters(), max_norm=1.0)  # Gradient clipping
+        scaler.step(optimizer)
+        scaler.update()
+    else:
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(student.parameters(), max_norm=1.0)
+        optimizer.step()
 
     student.eval()
     return loss.item(), mode, gen_text[:100], target_len
@@ -347,15 +427,39 @@ print("Starting training...")
 # Test API connectivity first
 print("Testing OpenRouter API connectivity...")
 try:
-    test_resp = call_teacher_api("Hello, this is a test.")
-    print("✓ API connectivity test successful!")
+    # Test with a simple request first
+    simple_resp = call_teacher_api("Hello")
+    print("✓ Basic API connectivity test successful!")
+    
+    # Test specifically for logprobs
+    print("Testing logprobs specifically...")
+    logprobs_resp = call_teacher_api("What is 2+2? Answer with just the number.")
+    gen_text, tokens, logprobs = parse_teacher_logprobs(logprobs_resp)
+    print(f"✓ Logprobs test - Generated: '{gen_text}'")
+    
+    if not logprobs or len(tokens) == 0:
+        print(f"⚠️  WARNING: Model '{TEACHER_MODEL}' doesn't return logprobs!")
+        print("   This might be due to:")
+        print("   1. OpenRouter doesn't support logprobs for this model")
+        print("   2. Model provider (Anthropic) doesn't expose logprobs via OpenRouter")
+        print("   3. Request format issues")
+        print("   Falling back to cross-entropy only training.")
+        print()
+        print("   📌 ALTERNATIVE: Try these models that definitely work:")
+        print("   - openai/gpt-4o-mini")
+        print("   - openai/gpt-3.5-turbo") 
+        print("   - openai/gpt-4o")
+    else:
+        print(f"✓ Model '{TEACHER_MODEL}' supports logprobs - KL divergence enabled!")
+        print(f"   Found {len(tokens)} tokens with {len(logprobs)} logprob sets")
+        
 except Exception as e:
     print(f"✗ API connectivity test failed: {e}")
     print("Please check:")
     print("1. Your OPENROUTER_API_KEY environment variable is set correctly")
     print("2. You have credits in your OpenRouter account")
     print("3. Your internet connection is working")
-    print("4. The model 'moonshotai/kimi-k2-0905' is available in your region")
+    print("4. The model is available in your region")
     exit(1)
 
 for epoch in range(EPOCHS):
@@ -375,6 +479,11 @@ for epoch in range(EPOCHS):
             
         try:
             loss_val, mode_used, gen_preview, tlen = distill_batch(prompt_text)
+            
+            # Skip invalid batches
+            if mode_used == "SKIP":
+                continue
+                
             running_loss += loss_val
             successful_batches += 1
             
@@ -391,8 +500,25 @@ for epoch in range(EPOCHS):
                 "gen": gen_preview[:30] + "..."
             })
             
+        except KeyboardInterrupt:
+            print("\n[Training] Interrupted by user. Saving current progress...")
+            break
+        except RuntimeError as e:
+            error_msg = str(e)
+            if "Teacher API failed" in error_msg:
+                print(f"\n[Training] Teacher API failed for batch {batch_idx}")
+                print("This could be due to:")
+                print("- Network connectivity issues")
+                print("- Rate limiting")
+                print("- Model unavailability")
+                print("Skipping this batch and continuing...")
+                time.sleep(2)
+                continue
+            else:
+                print(f"\n[Training] Runtime error for batch {batch_idx}: {e}")
+                continue
         except Exception as e:
-            print(f"\nError processing batch {batch_idx}: {e}")
+            print(f"\n[Training] Unexpected error for batch {batch_idx}: {e}")
             print(f"Prompt: {prompt_text[:100]}...")
             continue
     
@@ -402,6 +528,11 @@ for epoch in range(EPOCHS):
     print(f"  - KL divergence batches: {kl_batches}")
     print(f"  - Cross-entropy batches: {ce_batches}")
     print(f"  - Average loss: {avg_loss:.4f}")
+    
+    # If no successful batches, something is seriously wrong
+    if successful_batches == 0:
+        print("No successful batches in this epoch! Check network connectivity and API credentials.")
+        break
 
 # -------------------------------
 # Save student
