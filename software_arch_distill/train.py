@@ -332,8 +332,8 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
     student.train()
     optimizer.zero_grad()
 
-    # Use bfloat16 for better numerical stability - fixed autocast syntax
-    with autocast(device, dtype=torch.bfloat16):
+    # Use bfloat16 for better numerical stability - correct autocast syntax
+    with autocast(device_type=device, dtype=torch.bfloat16):
         outputs = student(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits
 
@@ -441,24 +441,20 @@ for epoch in range(EPOCHS):
         except KeyboardInterrupt:
             print("\n[Training] Interrupted by user. Saving current progress...")
             break
-        except RuntimeError as e:
-            error_msg = str(e)
-            if "Teacher API failed" in error_msg:
-                print(f"\n[Training] Teacher API failed for batch {batch_idx}")
-                print("This could be due to:")
-                print("- Network connectivity issues")
-                print("- Rate limiting")
-                print("- Model unavailability")
-                print("Skipping this batch and continuing...")
-                time.sleep(2)
-                continue
-            else:
-                print(f"\n[Training] Runtime error for batch {batch_idx}: {e}")
-                continue
-        except Exception as e:
-            print(f"\n[Training] Unexpected error for batch {batch_idx}: {e}")
-            print(f"Prompt: {prompt_text[:100]}...")
+        except requests.exceptions.RequestException as e:
+            # Only handle network-related API errors gracefully
+            print(f"\n[Training] Network/API error for batch {batch_idx}: {e}")
+            print("Retrying in 5 seconds...")
+            time.sleep(5)
             continue
+        except Exception as e:
+            # All other errors should stop training immediately
+            print(f"\n[FATAL ERROR] Training failed on batch {batch_idx}")
+            print(f"Error: {e}")
+            print(f"Prompt: {prompt_text[:100]}...")
+            print("\nThis indicates a bug in the code that needs to be fixed.")
+            print("Training stopped to prevent corrupted results.")
+            raise  # Re-raise the exception to stop execution
     
     avg_loss = running_loss / successful_batches if successful_batches > 0 else float('inf')
     print(f"\nEpoch {epoch+1} Summary:")
