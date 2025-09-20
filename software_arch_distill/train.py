@@ -6,6 +6,9 @@ from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
+from torch.cuda.amp import autocast, GradScaler
+scaler = GradScaler()
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
@@ -169,20 +172,25 @@ for epoch in range(EPOCHS):
             teacher_outputs = teacher(input_ids=input_ids, attention_mask=attention_mask)
             teacher_hidden = teacher_outputs.hidden_states[-1].float()  # <-- added .float() here
 
-        # Student forward
-        student_outputs = student(input_ids=input_ids, attention_mask=attention_mask)
-        student_hidden = student_outputs.hidden_states[-1]
+        # Teacher forward in no_grad + cast to float32
+        with torch.no_grad():
+            teacher_outputs = teacher(input_ids=input_ids, attention_mask=attention_mask)
+            teacher_hidden = teacher_outputs.hidden_states[-1].float()  # cast to float32 for loss
 
-        # Project student hidden states if needed
-        student_proj = projection(student_hidden)
-
-        # Compute distillation loss
-        distillation_loss = loss_fn(student_proj, teacher_hidden.detach())
-
-        # Backpropagation
         optimizer.zero_grad()
-        distillation_loss.backward()
-        optimizer.step()
+
+        # Student forward under autocast
+        with autocast():  # mixed precision
+            student_outputs = student(input_ids=input_ids, attention_mask=attention_mask)
+            student_hidden = student_outputs.hidden_states[-1]
+            student_proj = projection(student_hidden)
+            distillation_loss = loss_fn(student_proj, teacher_hidden)
+
+        # Backpropagation with scaling
+        scaler.scale(distillation_loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
 
         total_loss += distillation_loss.item()
         if step % 50 == 0:
