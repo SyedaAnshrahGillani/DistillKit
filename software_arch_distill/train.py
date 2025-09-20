@@ -148,8 +148,8 @@ projection = (
 )
 
 # Optimizer
-#optimizer = optim.Adam(student.parameters(), lr=1e-5)
-optimizer = optim.Adam(student.parameters(), lr=1e-5, device='cpu')  # CPU memory for optimizer
+optimizer = optim.Adam(student.parameters(), lr=1e-5)
+
 
 
 
