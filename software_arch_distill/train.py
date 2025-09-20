@@ -104,10 +104,11 @@ class ArchitectureDataset(Dataset):
         )
 
         return {
-            'input_ids': inputs.input_ids.squeeze(0),
-            'attention_mask': inputs.attention_mask.squeeze(0),
-            'labels': outputs.input_ids.squeeze(0)
+            'input_ids': inputs.input_ids,        # keep shape [1, seq_len]
+            'attention_mask': inputs.attention_mask,
+            'labels': outputs.input_ids
         }
+
 
 
 # -------------------------------
