@@ -7,29 +7,25 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
 from torch.cuda.amp import autocast, GradScaler
-scaler = GradScaler()
+import json
+from huggingface_hub import hf_hub_download
 
-
+# -------------------------------
+# Device & Scaler
+# -------------------------------
 device = "cuda" if torch.cuda.is_available() else "cpu"
+scaler = GradScaler()
 print(f"Using device: {device}")
 
 # -------------------------------
 # 2️⃣ Load Dataset manually with authentication
 # -------------------------------
-from datasets import load_dataset
-from huggingface_hub import hf_hub_download
-
-# Download the JSONL file from the private repo
 file_path = hf_hub_download(
     repo_id="ajibawa-2023/Software-Architecture",
     filename="Software_Architecture_Final.jsonl",
-    repo_type="dataset",  # important for datasets
-    use_auth_token=True   # your token must be logged in via `hf auth login`
+    repo_type="dataset",
+    use_auth_token=True
 )
-
-# Now load it manually
-import json
-from datasets import Dataset
 
 examples = []
 with open(file_path, "r") as f:
@@ -42,37 +38,27 @@ with open(file_path, "r") as f:
 
 dataset = Dataset.from_list(examples)
 
-# Keep only 'input' and 'output'
 def extract_fields(example):
-    return {
-        "input": example.get("input", ""),
-        "output": example.get("output", "")
-    }
+    return {"input": example.get("input", ""), "output": example.get("output", "")}
 
 processed_data = dataset.map(extract_fields, remove_columns=dataset.column_names)
 
-
 # -------------------------------
-# 3️⃣ Tokenizer
+# 3️⃣ Tokenizers
 # -------------------------------
 student_model_name = "Qwen/Qwen3-4B-Thinking-2507"
 teacher_model_name = "moonshotai/Moonlight-16B-A3B-Instruct"
 
-# Student tokenizer (normal)
 tokenizer = AutoTokenizer.from_pretrained(student_model_name)
-
-# Teacher tokenizer (custom code required)
 teacher_tokenizer = AutoTokenizer.from_pretrained(
     teacher_model_name,
-    #torch_dtype=torch.bfloat16,   # ✅ A100 runs BF16 very well
     trust_remote_code=True
 )
 
 MAX_LENGTH = 512
 
-
 # -------------------------------
-# 4️⃣ Dataset Class (HF wrapper)
+# 4️⃣ Dataset Class
 # -------------------------------
 class ArchitectureDataset(Dataset):
     def __init__(self, hf_dataset, tokenizer, max_length=512):
@@ -84,7 +70,7 @@ class ArchitectureDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        example = self.dataset[idx]  # returns a dict with 'input' and 'output'
+        example = self.dataset[idx]
         input_text = example['input']
         output_text = example['output']
 
@@ -104,43 +90,34 @@ class ArchitectureDataset(Dataset):
         )
 
         return {
-            'input_ids': inputs.input_ids,        # keep shape [1, seq_len]
+            'input_ids': inputs.input_ids,
             'attention_mask': inputs.attention_mask,
             'labels': outputs.input_ids
         }
 
-
-
 # -------------------------------
-# 5️⃣ Create PyTorch Dataset & DataLoader
+# 5️⃣ DataLoader
 # -------------------------------
 train_dataset = ArchitectureDataset(processed_data, tokenizer, MAX_LENGTH)
 train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
-
-
 # -------------------------------
-# 5️⃣ Load Models
+# 6️⃣ Load Models
 # -------------------------------
-
-
 teacher = AutoModelForCausalLM.from_pretrained(
     teacher_model_name,
     output_hidden_states=True,
-    trust_remote_code=True,     # ✅ required for custom repo
-    torch_dtype=torch.float16,  # or torch.float16 for mixed precision
-    #device_map="auto"  # Hugging Face will automatically split layers across GPU & CPU
-    device_map="cpu"  # <-- load entire teacher on CPU
-).to(device)
+    trust_remote_code=True,
+    torch_dtype=torch.float16,
+    device_map="cpu"   # Teacher entirely on CPU
+)
+teacher.eval()
 
 student = AutoModelForCausalLM.from_pretrained(
     student_model_name,
     output_hidden_states=True
 ).to(device)
 
-teacher.eval()
-
-# Optional projection if hidden sizes differ
 teacher_hidden_size = teacher.config.hidden_size
 student_hidden_size = student.config.hidden_size
 projection = (
@@ -149,19 +126,13 @@ projection = (
     else nn.Identity()
 )
 
-# Optimizer
 optimizer = optim.Adam(student.parameters(), lr=1e-5)
-
-
-
-
-# -------------------------------
-# 6️⃣ Training Loop
-# -------------------------------
+loss_fn = nn.MSELoss()
 EPOCHS = 3
 
-loss_fn = nn.MSELoss()
-
+# -------------------------------
+# 7️⃣ Training Loop
+# -------------------------------
 for epoch in range(EPOCHS):
     torch.cuda.empty_cache()
     print(f"Epoch {epoch+1}/{EPOCHS}")
@@ -172,36 +143,31 @@ for epoch in range(EPOCHS):
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['labels'].to(device)
 
-        # Flatten labels if batch_size=1 to keep shape [batch_size, seq_len]
+        # Flatten labels if batch_size=1
         labels = labels.view(input_ids.size(0), -1)
 
-
+        # --- Teacher forward on CPU ---
         with torch.no_grad():
-            # Move input to CPU for teacher
             teacher_input_ids = input_ids.cpu()
             teacher_attention_mask = attention_mask.cpu()
             teacher_outputs = teacher(
                 input_ids=teacher_input_ids,
                 attention_mask=teacher_attention_mask
             )
-            teacher_hidden = teacher_outputs.hidden_states[-1].float().to(device)  # move final hidden to GPU
+            teacher_hidden = teacher_outputs.hidden_states[-1].float().to(device)
 
-    
-
+        # --- Student forward on GPU ---
         optimizer.zero_grad()
-
-        # Student forward under autocast
         with autocast():  # mixed precision
             student_outputs = student(input_ids=input_ids, attention_mask=attention_mask)
             student_hidden = student_outputs.hidden_states[-1]
             student_proj = projection(student_hidden)
             distillation_loss = loss_fn(student_proj, teacher_hidden)
 
-        # Backpropagation with scaling
+        # --- Backpropagation with GradScaler ---
         scaler.scale(distillation_loss).backward()
         scaler.step(optimizer)
         scaler.update()
-
 
         total_loss += distillation_loss.item()
         if step % 50 == 0:
@@ -211,9 +177,8 @@ for epoch in range(EPOCHS):
     print(f"Epoch {epoch+1} completed. Average Loss: {avg_loss:.4f}")
 
 # -------------------------------
-# 7️⃣ Save Fine-Tuned Student Model
+# 8️⃣ Save Fine-Tuned Student Model
 # -------------------------------
 student.save_pretrained("./qwen3-4b-finetuned")
 tokenizer.save_pretrained("./qwen3-4b-finetuned")
-
 print("✅ Fine-tuning complete. Model saved at ./qwen3-4b-finetuned")
