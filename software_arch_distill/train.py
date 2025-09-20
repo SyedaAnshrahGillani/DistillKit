@@ -55,9 +55,17 @@ processed_data = dataset.map(extract_fields, remove_columns=dataset.column_names
 student_model_name = "Qwen/Qwen3-4B-Thinking-2507"
 teacher_model_name = "moonshotai/Kimi-K2-Instruct"
 
+# Student tokenizer (normal)
 tokenizer = AutoTokenizer.from_pretrained(student_model_name)
 
+# Teacher tokenizer (custom code required)
+teacher_tokenizer = AutoTokenizer.from_pretrained(
+    teacher_model_name,
+    trust_remote_code=True
+)
+
 MAX_LENGTH = 512
+
 
 # -------------------------------
 # 4️⃣ Dataset Class
@@ -106,17 +114,32 @@ train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 # -------------------------------
 # 5️⃣ Load Models
 # -------------------------------
-teacher = AutoModelForCausalLM.from_pretrained(teacher_model_name, output_hidden_states=True).to(device)
-student = AutoModelForCausalLM.from_pretrained(student_model_name, output_hidden_states=True).to(device)
+teacher = AutoModelForCausalLM.from_pretrained(
+    teacher_model_name,
+    output_hidden_states=True,
+    trust_remote_code=True,     # ✅ required for custom repo
+    torch_dtype=torch.bfloat16  # or torch.float16 depending on GPU
+).to(device)
+
+student = AutoModelForCausalLM.from_pretrained(
+    student_model_name,
+    output_hidden_states=True
+).to(device)
+
 teacher.eval()
 
 # Optional projection if hidden sizes differ
 teacher_hidden_size = teacher.config.hidden_size
 student_hidden_size = student.config.hidden_size
-projection = nn.Linear(student_hidden_size, teacher_hidden_size).to(device) if student_hidden_size != teacher_hidden_size else nn.Identity()
+projection = (
+    nn.Linear(student_hidden_size, teacher_hidden_size).to(device)
+    if student_hidden_size != teacher_hidden_size
+    else nn.Identity()
+)
 
 # Optimizer
 optimizer = optim.Adam(student.parameters(), lr=1e-5)
+
 
 # -------------------------------
 # 6️⃣ Training Loop
