@@ -176,15 +176,17 @@ for epoch in range(EPOCHS):
         labels = labels.view(input_ids.size(0), -1)
 
 
-        # Teacher forward
         with torch.no_grad():
-            teacher_outputs = teacher(input_ids=input_ids, attention_mask=attention_mask)
-            teacher_hidden = teacher_outputs.hidden_states[-1].float()  # <-- added .float() here
+            # Move input to CPU for teacher
+            teacher_input_ids = input_ids.cpu()
+            teacher_attention_mask = attention_mask.cpu()
+            teacher_outputs = teacher(
+                input_ids=teacher_input_ids,
+                attention_mask=teacher_attention_mask
+            )
+            teacher_hidden = teacher_outputs.hidden_states[-1].float().to(device)  # move final hidden to GPU
 
-        # Teacher forward in no_grad + cast to float32
-        with torch.no_grad():
-            teacher_outputs = teacher(input_ids=input_ids, attention_mask=attention_mask)
-            teacher_hidden = teacher_outputs.hidden_states[-1].float()  # cast to float32 for loss
+    
 
         optimizer.zero_grad()
 
