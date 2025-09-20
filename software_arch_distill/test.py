@@ -28,6 +28,8 @@ Provide detailed, practical guidance on:
 
 Format your responses with clear structure and actionable advice."""
 
+SYSTEM_PROMPT = "You are a helpful AI assistant. Think through problems step by step before answering."
+
 # === Load model & tokenizer once ===
 def load_model_and_tokenizer():
     print("Loading your distilled model...")
