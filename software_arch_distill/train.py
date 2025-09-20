@@ -167,7 +167,7 @@ for epoch in range(EPOCHS):
         # Teacher forward
         with torch.no_grad():
             teacher_outputs = teacher(input_ids=input_ids, attention_mask=attention_mask)
-            teacher_hidden = teacher_outputs.hidden_states[-1]
+            teacher_hidden = teacher_outputs.hidden_states[-1].float()  # <-- added .float() here
 
         # Student forward
         student_outputs = student(input_ids=input_ids, attention_mask=attention_mask)
