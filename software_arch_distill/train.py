@@ -332,27 +332,26 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
     student.train()
     optimizer.zero_grad()
 
-    # Use bfloat16 for better numerical stability - correct autocast syntax
-    with autocast(device_type=device, dtype=torch.bfloat16):
-        outputs = student(input_ids=input_ids, attention_mask=attention_mask)
-        logits = outputs.logits
+    # Simple forward pass - remove autocast to avoid compatibility issues
+    outputs = student(input_ids=input_ids, attention_mask=attention_mask)
+    logits = outputs.logits
 
-        # Extract logits for the target sequence
-        logits_target = logits[:, prompt_len: prompt_len + target_len, :].float()
+    # Extract logits for the target sequence
+    logits_target = logits[:, prompt_len: prompt_len + target_len, :].float()
 
-        if can_do_kl and teacher_probs_tensor is not None:
-            # Use KL divergence with teacher probabilities - add scaling for stability
-            student_log_probs = F.log_softmax(logits_target, dim=-1)
-            teacher_probs = teacher_probs_tensor.unsqueeze(0)
-            loss = F.kl_div(student_log_probs, teacher_probs, reduction="batchmean")
-            # Scale loss to prevent explosion
-            loss = loss / target_len
-            mode = "KL"
-        else:
-            # Fallback to cross-entropy with target tokens
-            labels = target_ids.unsqueeze(0).to(device)
-            loss = F.cross_entropy(logits_target.view(-1, logits_target.size(-1)), labels.view(-1))
-            mode = "CE"
+    if can_do_kl and teacher_probs_tensor is not None:
+        # Use KL divergence with teacher probabilities - add scaling for stability
+        student_log_probs = F.log_softmax(logits_target, dim=-1)
+        teacher_probs = teacher_probs_tensor.unsqueeze(0)
+        loss = F.kl_div(student_log_probs, teacher_probs, reduction="batchmean")
+        # Scale loss to prevent explosion
+        loss = loss / target_len
+        mode = "KL"
+    else:
+        # Fallback to cross-entropy with target tokens
+        labels = target_ids.unsqueeze(0).to(device)
+        loss = F.cross_entropy(logits_target.view(-1, logits_target.size(-1)), labels.view(-1))
+        mode = "CE"
 
     # Check for NaN/inf before backward pass
     if torch.isnan(loss) or torch.isinf(loss):
