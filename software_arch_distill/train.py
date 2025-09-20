@@ -31,10 +31,10 @@ TEACHER_MODEL = "openai/gpt-4o-mini"  # Definitely supports logprobs + cost effe
 
 STUDENT_MODEL = "Qwen/Qwen3-4B-Thinking-2507"
 BATCH_SIZE = 1
-MAX_NEW_TOKENS = 128
+MAX_NEW_TOKENS = 64  # Reduced for faster training
 TOP_K = 5   # number of top_logprobs you want, must be ≤ 20 per docs
 EPOCHS = 3
-LR = 1e-5
+LR = 1e-6  # Reduced learning rate for more stable training
 CACHE_TEACHER = True
 CACHE_DIR = "./teacher_cache"
 MAX_FAILED_SAMPLES = 100  # Max samples to fail before stopping epoch
@@ -240,7 +240,7 @@ def get_teacher_response_cached(prompt: str) -> Dict:
     return data
 
 # Remove GradScaler - not needed with bfloat16
-optimizer = optim.Adam(student.parameters(), lr=LR)
+optimizer = optim.Adam(student.parameters(), lr=LR, weight_decay=1e-5)  # Added weight decay for regularization
 
 def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
     # Get teacher response
@@ -332,8 +332,8 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
     student.train()
     optimizer.zero_grad()
 
-    # Use bfloat16 for better numerical stability
-    with autocast(enabled=(device == "cuda"), dtype=torch.bfloat16):
+    # Use bfloat16 for better numerical stability - fixed deprecation warning
+    with autocast('cuda', enabled=(device == "cuda"), dtype=torch.bfloat16):
         outputs = student(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits
 
@@ -341,10 +341,12 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
         logits_target = logits[:, prompt_len: prompt_len + target_len, :].float()
 
         if can_do_kl and teacher_probs_tensor is not None:
-            # Use KL divergence with teacher probabilities
+            # Use KL divergence with teacher probabilities - add scaling for stability
             student_log_probs = F.log_softmax(logits_target, dim=-1)
             teacher_probs = teacher_probs_tensor.unsqueeze(0)
             loss = F.kl_div(student_log_probs, teacher_probs, reduction="batchmean")
+            # Scale loss to prevent explosion
+            loss = loss / target_len
             mode = "KL"
         else:
             # Fallback to cross-entropy with target tokens
@@ -432,7 +434,8 @@ for epoch in range(EPOCHS):
                 "mode": mode_used,
                 "KL": kl_batches,
                 "CE": ce_batches,
-                "gen": gen_preview[:30] + "..."
+                "avg_loss": f"{running_loss/successful_batches:.4f}",
+                "gen": gen_preview[:20] + "..."
             })
             
         except KeyboardInterrupt:
@@ -472,7 +475,7 @@ for epoch in range(EPOCHS):
 # -------------------------------
 # Save student
 # -------------------------------
-outdir = "./qwen3-4b-kdistill-finetuned"
+outdir = "./qwen3-4b-kd-finetuned"
 os.makedirs(outdir, exist_ok=True)
 student.save_pretrained(outdir)
 tokenizer.save_pretrained(outdir)
