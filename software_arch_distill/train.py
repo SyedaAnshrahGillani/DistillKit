@@ -11,21 +11,38 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 
 # -------------------------------
-# 2️⃣ Load Dataset from Hugging Face
+# 2️⃣ Load Dataset manually with authentication
 # -------------------------------
 from datasets import load_dataset
+from huggingface_hub import hf_hub_download
 
-# Load the dataset using your Hugging Face token for private access
-dataset = load_dataset(
-    "ajibawa-2023/Software-Architecture",
-    split="train",
-    use_auth_token=True  # <-- ensures access to gated datasets
+# Download the JSONL file from the private repo
+file_path = hf_hub_download(
+    repo_id="ajibawa-2023/Software-Architecture",
+    filename="Software_Architecture_Final.jsonl",
+    repo_type="dataset",  # important for datasets
+    use_auth_token=True   # your token must be logged in via `hf auth login`
 )
 
-# Keep only 'input' and 'output', ignore extra columns
+# Now load it manually
+import json
+from datasets import Dataset
+
+examples = []
+with open(file_path, "r") as f:
+    for line in f:
+        obj = json.loads(line)
+        examples.append({
+            "input": obj.get("input", ""),
+            "output": obj.get("output", "")
+        })
+
+dataset = Dataset.from_list(examples)
+
+# Keep only 'input' and 'output'
 def extract_fields(example):
     return {
-        "input": example.get("input", ""),   # default empty string if missing
+        "input": example.get("input", ""),
         "output": example.get("output", "")
     }
 
