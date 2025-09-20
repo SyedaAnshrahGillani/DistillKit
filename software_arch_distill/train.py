@@ -69,21 +69,21 @@ MAX_LENGTH = 512
 
 
 # -------------------------------
-# 4️⃣ Dataset Class
+# 4️⃣ Dataset Class (HF wrapper)
 # -------------------------------
 class ArchitectureDataset(Dataset):
-    def __init__(self, examples, tokenizer, max_length=512):
-        self.examples = examples
+    def __init__(self, hf_dataset, tokenizer, max_length=512):
+        self.dataset = hf_dataset
         self.tokenizer = tokenizer
         self.max_length = max_length
 
     def __len__(self):
-        return len(self.examples)
+        return len(self.dataset)
 
     def __getitem__(self, idx):
-        item = self.examples[idx]
-        input_text = item.get('input', "")
-        output_text = item.get('output', "")
+        example = self.dataset[idx]  # returns a dict with 'input' and 'output'
+        input_text = example['input']
+        output_text = example['output']
 
         inputs = self.tokenizer(
             input_text,
@@ -107,16 +107,18 @@ class ArchitectureDataset(Dataset):
         }
 
 
+# -------------------------------
+# 5️⃣ Create PyTorch Dataset & DataLoader
+# -------------------------------
+train_dataset = ArchitectureDataset(processed_data, tokenizer, MAX_LENGTH)
+train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)
+
+
 
 # -------------------------------
 # 5️⃣ Load Models
 # -------------------------------
 
-# -------------------------------
-# Create PyTorch Datasets
-# -------------------------------
-train_dataset = ArchitectureDataset(processed_data.to_list(), tokenizer, MAX_LENGTH)
-train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 
 teacher = AutoModelForCausalLM.from_pretrained(
     teacher_model_name,
