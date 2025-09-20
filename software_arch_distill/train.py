@@ -53,7 +53,7 @@ processed_data = dataset.map(extract_fields, remove_columns=dataset.column_names
 # 3️⃣ Tokenizer
 # -------------------------------
 student_model_name = "Qwen/Qwen3-4B-Thinking-2507"
-teacher_model_name = "moonshotai/Kimi-Dev-72B"
+teacher_model_name = "moonshotai/Moonlight-16B-A3B-Instruct"
 
 # Student tokenizer (normal)
 tokenizer = AutoTokenizer.from_pretrained(student_model_name)
