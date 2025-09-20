@@ -124,7 +124,7 @@ teacher = AutoModelForCausalLM.from_pretrained(
     teacher_model_name,
     output_hidden_states=True,
     trust_remote_code=True,     # ✅ required for custom repo
-    torch_dtype=torch.bfloat16,  # or torch.float16 for mixed precision
+    torch_dtype=torch.float16,  # or torch.float16 for mixed precision
     device_map="auto"  # Hugging Face will automatically split layers across GPU & CPU
 ).to(device)
 
