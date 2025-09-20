@@ -3,12 +3,13 @@
 # -------------------------------
 import torch
 from torch import nn, optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader  # <-- only DataLoader from torch
+from datasets import load_dataset, Dataset  # <-- Hugging Face Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from datasets import load_dataset
 from torch.cuda.amp import autocast, GradScaler
 import json
 from huggingface_hub import hf_hub_download
+
 
 # -------------------------------
 # Device & Scaler
