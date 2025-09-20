@@ -6,7 +6,6 @@ Uses KL divergence if teacher returns token-level logprobs & top_logprobs, mappi
 import os
 import json
 import time
-import socket
 from typing import List, Optional, Dict, Tuple
 
 import requests
@@ -17,7 +16,7 @@ from torch.utils.data import DataLoader, Dataset
 from datasets import Dataset as HFDataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from huggingface_hub import hf_hub_download
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import autocast
 from tqdm.auto import tqdm
 
 # -------------------------------
@@ -44,32 +43,6 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Device: {device}")
 
 os.makedirs(CACHE_DIR, exist_ok=True)
-
-# -------------------------------
-# Network connectivity check
-# -------------------------------
-def check_network_connectivity(host="api.openrouter.ai", port=443, timeout=5):
-    """Check if we can reach the API endpoint"""
-    try:
-        socket.create_connection((host, port), timeout)
-        return True
-    except (socket.gaierror, socket.timeout, ConnectionRefusedError):
-        return False
-
-def wait_for_connectivity(max_wait_time=300, check_interval=10):
-    """Wait for network connectivity to be restored"""
-    print("Checking network connectivity...")
-    start_time = time.time()
-    
-    while time.time() - start_time < max_wait_time:
-        if check_network_connectivity():
-            print("Network connectivity restored!")
-            return True
-        print(f"No connectivity, waiting {check_interval}s before retry...")
-        time.sleep(check_interval)
-    
-    print(f"Network connectivity not restored after {max_wait_time}s")
-    return False
 
 # -------------------------------
 # Dataset loading
@@ -139,12 +112,6 @@ HEADERS = {
 }
 
 def call_teacher_api(prompt: str, max_new_tokens: int = MAX_NEW_TOKENS, top_k: int = TOP_K, retry: int = 3) -> Dict:
-    # Check connectivity first
-    if not check_network_connectivity():
-        print("No network connectivity detected. Waiting for connection...")
-        if not wait_for_connectivity():
-            raise RuntimeError("Network connectivity could not be established")
-    
     # CRITICAL: Exact OpenRouter logprobs format
     payload = {
         "model": TEACHER_MODEL,
@@ -156,31 +123,15 @@ def call_teacher_api(prompt: str, max_new_tokens: int = MAX_NEW_TOKENS, top_k: i
         "stream": False
     }
     
-    # Debug: Print the exact payload being sent
-    print(f"[Teacher API] Sending payload: {json.dumps(payload, indent=2)}")
-    
     last_error = None
     for attempt in range(retry):
         try:
             print(f"[Teacher API] Making request (attempt {attempt+1}/{retry})")
-            resp = requests.post(TEACHER_API_URL, headers=HEADERS, json=payload, timeout=120)  # Increased timeout
+            resp = requests.post(TEACHER_API_URL, headers=HEADERS, json=payload, timeout=120)
             
             if resp.status_code == 200:
                 data = resp.json()
                 print(f"[Teacher API] Success! Response keys: {list(data.keys())}")
-                
-                # Debug: Print first choice structure
-                if 'choices' in data and len(data['choices']) > 0:
-                    choice = data['choices'][0]
-                    print(f"[Debug] Choice keys: {list(choice.keys())}")
-                    if 'logprobs' in choice:
-                        print(f"[Debug] Logprobs in choice: {choice['logprobs']}")
-                    if 'message' in choice and isinstance(choice['message'], dict):
-                        msg = choice['message']
-                        print(f"[Debug] Message keys: {list(msg.keys())}")
-                        if 'logprobs' in msg:
-                            print(f"[Debug] Logprobs in message: {msg['logprobs']}")
-                
                 return data
             elif resp.status_code == 401:
                 print(f"[Teacher API] Authentication failed. Check your API key.")
@@ -201,12 +152,7 @@ def call_teacher_api(prompt: str, max_new_tokens: int = MAX_NEW_TOKENS, top_k: i
         except requests.exceptions.ConnectionError as e:
             last_error = f"Connection error: {e}"
             print(f"[Teacher API] Connection error (attempt {attempt+1}/{retry}): {e}")
-            # For network errors, wait longer and check connectivity
-            if attempt < retry - 1:
-                time.sleep(5 * (attempt + 1))  # Exponential backoff
-                if not check_network_connectivity():
-                    print("Connectivity lost, waiting for restoration...")
-                    wait_for_connectivity(max_wait_time=60)
+            time.sleep(5 * (attempt + 1))  # Exponential backoff
         except requests.exceptions.Timeout as e:
             last_error = f"Timeout error: {e}"
             print(f"[Teacher API] Timeout error (attempt {attempt+1}/{retry}): {e}")
@@ -289,10 +235,7 @@ def get_teacher_response_cached(prompt: str) -> Dict:
             json.dump(data, f)
     return data
 
-# -------------------------------
-# Distillation setup
-# -------------------------------
-scaler = GradScaler()
+# Remove GradScaler - not needed with bfloat16
 optimizer = optim.Adam(student.parameters(), lr=LR)
 
 def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
@@ -404,17 +347,10 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
         print(f"[Training] Invalid loss detected: {loss.item()}, skipping batch")
         return float('inf'), "SKIP", gen_text[:100], target_len
 
-    # Backward pass with gradient clipping
-    if device == "cuda":
-        scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)  # Unscale before gradient clipping
-        torch.nn.utils.clip_grad_norm_(student.parameters(), max_norm=1.0)  # Gradient clipping
-        scaler.step(optimizer)
-        scaler.update()
-    else:
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(student.parameters(), max_norm=1.0)
-        optimizer.step()
+    # Backward pass - no GradScaler needed with bfloat16
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(student.parameters(), max_norm=1.0)  # Gradient clipping
+    optimizer.step()
 
     student.eval()
     return loss.item(), mode, gen_text[:100], target_len
@@ -427,31 +363,21 @@ print("Starting training...")
 # Test API connectivity first
 print("Testing OpenRouter API connectivity...")
 try:
-    # Test with a simple request first
-    simple_resp = call_teacher_api("Hello")
-    print("✓ Basic API connectivity test successful!")
-    
-    # Test specifically for logprobs
-    print("Testing logprobs specifically...")
-    logprobs_resp = call_teacher_api("What is 2+2? Answer with just the number.")
-    gen_text, tokens, logprobs = parse_teacher_logprobs(logprobs_resp)
-    print(f"✓ Logprobs test - Generated: '{gen_text}'")
+    # Simple test
+    test_resp = call_teacher_api("What is 2+2? Answer with just the number.")
+    gen_text, tokens, logprobs = parse_teacher_logprobs(test_resp)
+    print(f"✓ API test successful - Generated: '{gen_text}'")
     
     if not logprobs or len(tokens) == 0:
         print(f"⚠️  WARNING: Model '{TEACHER_MODEL}' doesn't return logprobs!")
-        print("   This might be due to:")
-        print("   1. OpenRouter doesn't support logprobs for this model")
-        print("   2. Model provider (Anthropic) doesn't expose logprobs via OpenRouter")
-        print("   3. Request format issues")
         print("   Falling back to cross-entropy only training.")
-        print()
-        print("   📌 ALTERNATIVE: Try these models that definitely work:")
+        print("   📌 Try these models if you want logprobs:")
         print("   - openai/gpt-4o-mini")
         print("   - openai/gpt-3.5-turbo") 
         print("   - openai/gpt-4o")
     else:
         print(f"✓ Model '{TEACHER_MODEL}' supports logprobs - KL divergence enabled!")
-        print(f"   Found {len(tokens)} tokens with {len(logprobs)} logprob sets")
+        print(f"   Found {len(tokens)} tokens with logprobs")
         
 except Exception as e:
     print(f"✗ API connectivity test failed: {e}")
@@ -459,7 +385,6 @@ except Exception as e:
     print("1. Your OPENROUTER_API_KEY environment variable is set correctly")
     print("2. You have credits in your OpenRouter account")
     print("3. Your internet connection is working")
-    print("4. The model is available in your region")
     exit(1)
 
 for epoch in range(EPOCHS):
