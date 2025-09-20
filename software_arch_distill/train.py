@@ -114,7 +114,7 @@ class ArchitectureDataset(Dataset):
 # 5️⃣ Create PyTorch Dataset & DataLoader
 # -------------------------------
 train_dataset = ArchitectureDataset(processed_data, tokenizer, MAX_LENGTH)
-train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)
+train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
 
 
