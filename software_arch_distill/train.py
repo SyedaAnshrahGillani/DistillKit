@@ -117,6 +117,13 @@ class ArchitectureDataset(Dataset):
 # -------------------------------
 # 5️⃣ Load Models
 # -------------------------------
+
+# -------------------------------
+# Create PyTorch Datasets
+# -------------------------------
+train_dataset = ArchitectureDataset(processed_data.to_list(), tokenizer, MAX_LENGTH)
+train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)
+
 teacher = AutoModelForCausalLM.from_pretrained(
     teacher_model_name,
     output_hidden_states=True,
