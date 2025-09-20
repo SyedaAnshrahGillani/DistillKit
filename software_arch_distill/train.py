@@ -60,6 +60,10 @@ with open(file_path, "r", encoding="utf-8") as f:
         obj = json.loads(line)
         examples.append({"input": obj.get("input", ""), "output": obj.get("output", "")})
 
+# Use 3k examples for good balance of cost/quality
+examples = examples[:3000]
+print(f"Using {len(examples)} examples for training")
+
 hf_dataset = HFDataset.from_list(examples)
 
 def extract_fields(example):
@@ -279,13 +283,19 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
         mapping_possible = True
         
         for i, step_dict in enumerate(teacher_top_logprobs):
-            if not isinstance(step_dict, dict) or len(step_dict) == 0:
-                print(f"[KL] Step {i}: Invalid or empty logprobs dict")
+            if not isinstance(step_dict, list) or len(step_dict) == 0:
+                print(f"[KL] Step {i}: Invalid or empty logprobs list")
                 mapping_possible = False
                 break
             
             mapped = {}
-            for token_str, logprob in step_dict.items():
+            # step_dict is a list of {'token': str, 'logprob': float} dictionaries
+            for token_info in step_dict:
+                if not isinstance(token_info, dict):
+                    continue
+                token_str = token_info.get('token', '')
+                logprob = token_info.get('logprob', 0.0)
+                
                 try:
                     # Try to encode the token string to get token ID
                     token_ids = tokenizer.encode(token_str, add_special_tokens=False)
@@ -462,7 +472,7 @@ for epoch in range(EPOCHS):
 # -------------------------------
 # Save student
 # -------------------------------
-outdir = "./qwen3-4b-kd-finetuned"
+outdir = "./qwen3-4b-kdistill-finetuned"
 os.makedirs(outdir, exist_ok=True)
 student.save_pretrained(outdir)
 tokenizer.save_pretrained(outdir)
