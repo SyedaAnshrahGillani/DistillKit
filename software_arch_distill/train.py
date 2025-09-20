@@ -332,8 +332,8 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
     student.train()
     optimizer.zero_grad()
 
-    # Use bfloat16 for better numerical stability - fixed deprecation warning
-    with autocast('cuda', enabled=(device == "cuda"), dtype=torch.bfloat16):
+    # Use bfloat16 for better numerical stability - fixed autocast syntax
+    with autocast(device, dtype=torch.bfloat16):
         outputs = student(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits
 
