@@ -15,14 +15,14 @@ print(f"Using device: {device}")
 # -------------------------------
 dataset = load_dataset("ajibawa-2023/Software-Architecture", split="train")
 
+# Keep only 'input' and 'output', ignore extra columns
 def extract_fields(example):
     return {
-        "input": example["input"],
-        "output": example["output"]
+        "input": example.get("input", ""),   # default empty string if missing
+        "output": example.get("output", "")
     }
 
-processed_data = dataset.map(extract_fields)
-processed_data = processed_data.remove_columns([col for col in processed_data.column_names if col not in ["input", "output"]])
+processed_data = dataset.map(extract_fields, remove_columns=dataset.column_names)
 
 # -------------------------------
 # 3️⃣ Tokenizer
