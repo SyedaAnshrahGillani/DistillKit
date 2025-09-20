@@ -81,12 +81,6 @@ class ArchitectureDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, idx):
-        # ✅ Handle case where DataLoader passes a list of indices
-        if isinstance(idx, list):
-            return [self._process_one(i) for i in idx]
-        return self._process_one(idx)
-
-    def _process_one(self, idx):
         item = self.examples[idx]
         input_text = item.get('input', "")
         output_text = item.get('output', "")
@@ -111,6 +105,7 @@ class ArchitectureDataset(Dataset):
             'attention_mask': inputs.attention_mask.squeeze(0),
             'labels': outputs.input_ids.squeeze(0)
         }
+
 
 
 
