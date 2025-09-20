@@ -1,9 +1,6 @@
 """
-Full-sequence logits distillation with teacher via API (OpenRouter-style).
-Uses Kimi-K2-0905 as teacher. If teacher returns per-token top-k logprobs and mapping to student tokenizer works, uses KL divergence over the sequence; else falls back to cross-entropy (hard labels).
-Prereqs:
-- OPENROUTER_API_KEY environment variable set.
-- Teacher API supports returning token-level info (top_logprobs or logprobs).
+Full-sequence logits distillation using OpenRouter’s Kimi-K2-0905 model.
+Uses KL divergence if teacher returns token-level logprobs & top_logprobs, mapping to student tokenizer works; otherwise falls back to cross-entropy.
 """
 
 import os
@@ -30,12 +27,12 @@ if OPENROUTER_API_KEY is None:
     raise RuntimeError("Set OPENROUTER_API_KEY environment variable before running.")
 
 TEACHER_API_URL = os.getenv("TEACHER_API_URL", "https://api.openrouter.ai/v1/chat/completions")
-TEACHER_MODEL = "openrouter/moonshotai/kimi-k2-0905"
+TEACHER_MODEL = "moonshotai/kimi-k2-0905"  # model name per OpenRouter
 
 STUDENT_MODEL = "Qwen/Qwen3-4B-Thinking-2507"
 BATCH_SIZE = 1
 MAX_NEW_TOKENS = 128
-TOP_K = 50
+TOP_K = 20   # number of top_logprobs you want, must be ≤ 20 per docs
 EPOCHS = 3
 LR = 1e-5
 CACHE_TEACHER = True
@@ -70,7 +67,7 @@ def extract_fields(example):
 processed_data = hf_dataset.map(extract_fields, remove_columns=hf_dataset.column_names)
 
 # -------------------------------
-# Tokenizer & Student
+# Tokenizer & Student model
 # -------------------------------
 tokenizer = AutoTokenizer.from_pretrained(STUDENT_MODEL, use_fast=False)
 student = AutoModelForCausalLM.from_pretrained(
@@ -85,7 +82,7 @@ print(f"Student vocab size: {vocab_size}")
 # DataLoader
 # -------------------------------
 class ArchitectureDataset(Dataset):
-    def __init__(self, hf_data, tokenizer, max_length=512):
+    def __init__(self, hf_data, tokenizer, max_length: int = 512):
         self.data = hf_data
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -111,61 +108,61 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-def call_teacher_api(prompt: str, max_new_tokens: int = MAX_NEW_TOKENS, top_k: int = TOP_K) -> Dict:
+def call_teacher_api(prompt: str, max_new_tokens: int = MAX_NEW_TOKENS, top_k: int = TOP_K, retry: int = 3) -> Dict:
+    # Correct per docs: logprobs must be boolean true, top_logprobs integer
     payload = {
         "model": TEACHER_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_new_tokens,
-        "logprobs": top_k,           # or use "top_k": top_k if needed
         "temperature": 0.0,
-        "echo": False,
+        "logprobs": True,            # must be boolean
+        "top_logprobs": top_k,       # integer ≤ 20
+        "stream": False
     }
-    resp = requests.post(TEACHER_API_URL, headers=HEADERS, json=payload, timeout=60)
-    try:
-        data = resp.json()
-    except Exception as e:
-        raise RuntimeError(f"Teacher API returned non-JSON: {e}, text: {resp.text}")
-    if resp.status_code != 200:
-        raise RuntimeError(f"Teacher API error {resp.status_code}: {data}")
-    return data
+    for attempt in range(retry):
+        try:
+            resp = requests.post(TEACHER_API_URL, headers=HEADERS, json=payload, timeout=30)
+            data = resp.json()
+            if resp.status_code == 200:
+                return data
+            else:
+                print(f"[Teacher API] status {resp.status_code}, attempt {attempt+1}/{retry}, resp: {data}")
+        except Exception as e:
+            print(f"[Teacher API] error (attempt {attempt+1}/{retry}): {e}")
+        time.sleep(2)
+    raise RuntimeError(f"Teacher API failed after {retry} attempts for prompt: {prompt}")
 
 def parse_teacher_logprobs(resp_json: Dict) -> Tuple[str, List[str], Optional[List[Dict[str, float]]]]:
-    choices = resp_json.get("choices") or resp_json.get("outputs") or []
+    choices = resp_json.get("choices") or []
     if not choices:
         raise RuntimeError(f"No choices in teacher response: {resp_json}")
     choice = choices[0]
 
-    # Attempt extraction
     logp_container = None
+    tokens = None
+    top_log = None
+
     if "logprobs" in choice:
         logp_container = choice["logprobs"]
     elif "message" in choice and isinstance(choice["message"], dict) and "logprobs" in choice["message"]:
         logp_container = choice["message"]["logprobs"]
 
-    tokens = None
-    top_log = None
-
-    if logp_container:
+    if logp_container is not None:
         tokens = logp_container.get("tokens") or logp_container.get("token") or None
-        top_log = logp_container.get("top_logprobs") or logp_container.get("topLogprobs") or logp_container.get("top_log_probs") or None
+        top_log = logp_container.get("top_logprobs") or logp_container.get("topLogprobs") or None
 
-        # fallback: some providers wrap in "content" list
         if (tokens is None or top_log is None) and "content" in logp_container and isinstance(logp_container["content"], list):
             content_list = logp_container["content"]
             tokens = [step.get("token") for step in content_list]
             top_log = [step.get("top_logprobs") for step in content_list]
 
-    # Extract gen_text
     gen_text = None
     if "message" in choice and isinstance(choice["message"], dict):
         gen_text = choice["message"].get("content")
     if gen_text is None and "text" in choice:
         gen_text = choice["text"]
-    if gen_text is None and "output_text" in choice:
-        gen_text = choice["output_text"]
 
-    # If still no gen_text, build from tokens
-    if (gen_text is None or gen_text == "") and tokens:
+    if gen_text is None and tokens:
         gen_text = "".join(tokens)
 
     return gen_text or "", tokens or [], top_log
@@ -189,7 +186,7 @@ def get_teacher_response_cached(prompt: str) -> Dict:
     return data
 
 # -------------------------------
-# Distillation
+# Distillation setup
 # -------------------------------
 scaler = GradScaler()
 optimizer = optim.Adam(student.parameters(), lr=LR)
@@ -201,7 +198,6 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
     if not gen_text:
         raise RuntimeError(f"Could not extract generated text for prompt: {prompt}")
 
-    # Tokenize
     prompt_enc = tokenizer(prompt, add_special_tokens=False, return_tensors="pt")
     prompt_ids = prompt_enc["input_ids"][0]
     prompt_len = prompt_ids.size(0)
@@ -210,7 +206,6 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
     target_ids = teacher_enc["input_ids"][0]
     target_len = target_ids.size(0)
 
-    # Limit target length so we do not blow up memory
     if target_len > MAX_NEW_TOKENS:
         target_ids = target_ids[:MAX_NEW_TOKENS]
         target_len = MAX_NEW_TOKENS
@@ -219,22 +214,23 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
     input_ids = torch.cat([prompt_ids, target_ids], dim=0).unsqueeze(0).to(device)
     attention_mask = torch.ones_like(input_ids).to(device)
 
-    # Prepare teacher distribution if possible
     can_do_kl = False
     teacher_probs_tensor = None
 
     if teacher_top_logprobs and isinstance(teacher_top_logprobs, list) and len(teacher_top_logprobs) == len(teacher_tokens):
         per_step_mapped: List[Dict[int, float]] = []
         mapping_possible = True
-
         for step_dict in teacher_top_logprobs[:target_len]:
             if not isinstance(step_dict, dict):
                 mapping_possible = False
                 break
             mapped = {}
             for tstr, logp in step_dict.items():
-                # map tstr to student token ids
-                ids = tokenizer.encode(tstr, add_special_tokens=False)
+                try:
+                    ids = tokenizer.encode(tstr, add_special_tokens=False)
+                except Exception:
+                    mapping_possible = False
+                    break
                 if len(ids) != 1:
                     mapping_possible = False
                     break
@@ -243,7 +239,6 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
             if not mapping_possible:
                 break
             per_step_mapped.append(mapped)
-
         if mapping_possible:
             t = torch.full((target_len, vocab_size), -1e9, dtype=torch.float32)
             for i, step_map in enumerate(per_step_mapped):
@@ -253,7 +248,6 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
             teacher_probs_tensor = F.softmax(t, dim=-1).to(device)
             can_do_kl = True
 
-    # Student forward + loss
     student.train()
     optimizer.zero_grad()
 
@@ -261,11 +255,11 @@ def distill_batch(prompt: str) -> Tuple[float, str, str, int]:
         outputs = student(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits  # shape (1, prompt_len + target_len, vocab_size)
 
-        logits_target = logits[:, prompt_len: prompt_len + target_len, :].float()  # shape (1, T, V)
+        logits_target = logits[:, prompt_len: prompt_len + target_len, :].float()
 
         if can_do_kl:
             student_log_probs = F.log_softmax(logits_target, dim=-1)
-            teacher_probs = teacher_probs_tensor.unsqueeze(0)  # shape (1, T, V)
+            teacher_probs = teacher_probs_tensor.unsqueeze(0)
             loss = F.kl_div(student_log_probs, teacher_probs, reduction="batchmean")
             mode = "KL"
         else:
