@@ -30,11 +30,11 @@ TEACHER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 TEACHER_MODEL = "openai/gpt-4o-mini"  # Definitely supports logprobs + cost effective
 
 STUDENT_MODEL = "Qwen/Qwen3-4B-Thinking-2507"
-BATCH_SIZE = 1
-MAX_NEW_TOKENS = 64  # Reduced for faster training
+BATCH_SIZE = 2
+MAX_NEW_TOKENS = 2500  # Reduced for faster training
 TOP_K = 5   # number of top_logprobs you want, must be ≤ 20 per docs
 EPOCHS = 3
-LR = 1e-6  # Reduced learning rate for more stable training
+LR = 6.957320940660633e-05 #1e-6  # Reduced learning rate for more stable training
 CACHE_TEACHER = True
 CACHE_DIR = "./teacher_cache"
 MAX_FAILED_SAMPLES = 100  # Max samples to fail before stopping epoch
