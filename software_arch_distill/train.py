@@ -61,6 +61,7 @@ tokenizer = AutoTokenizer.from_pretrained(student_model_name)
 # Teacher tokenizer (custom code required)
 teacher_tokenizer = AutoTokenizer.from_pretrained(
     teacher_model_name,
+    torch_dtype=torch.float16,   # force FP16
     trust_remote_code=True
 )
 
