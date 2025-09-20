@@ -171,6 +171,10 @@ for epoch in range(EPOCHS):
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['labels'].to(device)
 
+        # Flatten labels if batch_size=1 to keep shape [batch_size, seq_len]
+        labels = labels.view(input_ids.size(0), -1)
+
+
         # Teacher forward
         with torch.no_grad():
             teacher_outputs = teacher(input_ids=input_ids, attention_mask=attention_mask)
