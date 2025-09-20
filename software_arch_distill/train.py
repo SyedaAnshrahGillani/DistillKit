@@ -27,7 +27,7 @@ if OPENROUTER_API_KEY is None:
     raise RuntimeError("Set OPENROUTER_API_KEY environment variable before running.")
 
 TEACHER_API_URL = "https://openrouter.ai/api/v1/chat/completions"  # Fixed: removed env variable for standard endpoint
-TEACHER_MODEL = "moonshotai/kimi-k2-0905"  # model name per OpenRouter
+TEACHER_MODEL = "anthropic/claude-3.5-sonnet"  # model name per OpenRouter
 
 STUDENT_MODEL = "Qwen/Qwen3-4B-Thinking-2507"
 BATCH_SIZE = 1
