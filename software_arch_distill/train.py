@@ -64,7 +64,7 @@ MAX_LENGTH = 512
 # -------------------------------
 class ArchitectureDataset(Dataset):
     def __init__(self, data, tokenizer, max_length=512):
-        self.data = data
+        self.data = data  # must be a list of dicts
         self.tokenizer = tokenizer
         self.max_length = max_length
 
@@ -77,8 +77,12 @@ class ArchitectureDataset(Dataset):
         output_text = item['output']
 
         # Tokenize input and output
-        inputs = self.tokenizer(input_text, truncation=True, padding='max_length', max_length=self.max_length, return_tensors="pt")
-        outputs = self.tokenizer(output_text, truncation=True, padding='max_length', max_length=self.max_length, return_tensors="pt")
+        inputs = self.tokenizer(
+            input_text, truncation=True, padding='max_length', max_length=self.max_length, return_tensors="pt"
+        )
+        outputs = self.tokenizer(
+            output_text, truncation=True, padding='max_length', max_length=self.max_length, return_tensors="pt"
+        )
 
         return {
             'input_ids': inputs.input_ids.squeeze(),
@@ -86,8 +90,10 @@ class ArchitectureDataset(Dataset):
             'labels': outputs.input_ids.squeeze()
         }
 
-train_dataset = ArchitectureDataset(processed_data, tokenizer, MAX_LENGTH)
-train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)  # adjust batch size based on GPU
+# ✅ convert Hugging Face Dataset to list before passing
+train_dataset = ArchitectureDataset(processed_data.to_list(), tokenizer, MAX_LENGTH)
+train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)
+
 
 # -------------------------------
 # 5️⃣ Load Models
