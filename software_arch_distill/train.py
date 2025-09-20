@@ -63,25 +63,33 @@ MAX_LENGTH = 512
 # 4️⃣ Dataset Class
 # -------------------------------
 class ArchitectureDataset(Dataset):
-    def __init__(self, data, tokenizer, max_length=512):
-        self.data = data  # must be a list of dicts
+    def __init__(self, examples, tokenizer, max_length=512):
+        self.examples = examples  # renamed to avoid conflict with Dataset attributes
         self.tokenizer = tokenizer
         self.max_length = max_length
 
     def __len__(self):
-        return len(self.data)
+        return len(self.examples)
 
     def __getitem__(self, idx):
-        item = self.data[idx]
-        input_text = item['input']
-        output_text = item['output']
+        item = self.examples[idx]
+        input_text = item.get('input', "")
+        output_text = item.get('output', "")
 
         # Tokenize input and output
         inputs = self.tokenizer(
-            input_text, truncation=True, padding='max_length', max_length=self.max_length, return_tensors="pt"
+            input_text,
+            truncation=True,
+            padding='max_length',
+            max_length=self.max_length,
+            return_tensors="pt"
         )
         outputs = self.tokenizer(
-            output_text, truncation=True, padding='max_length', max_length=self.max_length, return_tensors="pt"
+            output_text,
+            truncation=True,
+            padding='max_length',
+            max_length=self.max_length,
+            return_tensors="pt"
         )
 
         return {
@@ -90,7 +98,7 @@ class ArchitectureDataset(Dataset):
             'labels': outputs.input_ids.squeeze()
         }
 
-# ✅ convert Hugging Face Dataset to list before passing
+# ✅ Convert Hugging Face Dataset to list before passing
 train_dataset = ArchitectureDataset(processed_data.to_list(), tokenizer, MAX_LENGTH)
 train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 
