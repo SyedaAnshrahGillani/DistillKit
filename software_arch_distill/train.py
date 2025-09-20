@@ -11,14 +11,27 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 
 # -------------------------------
-# 2️⃣ Load Dataset
+# 2️⃣ Load Dataset manually
 # -------------------------------
-dataset = load_dataset("ajibawa-2023/Software-Architecture", split="train")
 
-# Keep only 'input' and 'output', ignore extra columns
+# Download the JSONL first, or keep a local copy
+data_file = "Software_Architecture_Final.jsonl"
+
+examples = []
+with open(data_file, "r") as f:
+    for line in f:
+        obj = json.loads(line)
+        examples.append({
+            "input": obj.get("input", ""),    # default empty string if missing
+            "output": obj.get("output", "")
+        })
+
+dataset = Dataset.from_list(examples)
+
+# Keep only 'input' and 'output', ignore extra columns (redundant now but safe)
 def extract_fields(example):
     return {
-        "input": example.get("input", ""),   # default empty string if missing
+        "input": example.get("input", ""),
         "output": example.get("output", "")
     }
 
