@@ -61,7 +61,7 @@ tokenizer = AutoTokenizer.from_pretrained(student_model_name)
 # Teacher tokenizer (custom code required)
 teacher_tokenizer = AutoTokenizer.from_pretrained(
     teacher_model_name,
-    torch_dtype=torch.bfloat16,   # ✅ A100 runs BF16 very well
+    #torch_dtype=torch.bfloat16,   # ✅ A100 runs BF16 very well
     trust_remote_code=True
 )
 
@@ -124,7 +124,7 @@ teacher = AutoModelForCausalLM.from_pretrained(
     teacher_model_name,
     output_hidden_states=True,
     trust_remote_code=True,     # ✅ required for custom repo
-    torch_dtype=torch.bfloat16  # or torch.float16 depending on GPU
+    #torch_dtype=torch.bfloat16  # or torch.float16 depending on GPU
 ).to(device)
 
 student = AutoModelForCausalLM.from_pretrained(
