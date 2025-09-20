@@ -161,6 +161,7 @@ EPOCHS = 3
 loss_fn = nn.MSELoss()
 
 for epoch in range(EPOCHS):
+    torch.cuda.empty_cache()
     print(f"Epoch {epoch+1}/{EPOCHS}")
     total_loss = 0.0
 
