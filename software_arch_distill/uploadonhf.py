@@ -8,8 +8,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # Configuration
 HF_USERNAME = "Anshrah"  # Replace with your Hugging Face username
-MODEL_NAME = "qwen3-4b-software-arch-distilled_02"  # Choose your model name
-LOCAL_MODEL_PATH = "./qwen3-4b-kd-finetuned"  # Path where your model is saved
+MODEL_NAME = "qwen3-4b-software-arch-distilled_03"  # Choose your model name
+LOCAL_MODEL_PATH = "./distillation_checkpoints/model"  # Path where your model is saved
 
 # Full repository name
 REPO_ID = f"{HF_USERNAME}/{MODEL_NAME}"
