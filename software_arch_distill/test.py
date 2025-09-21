@@ -8,7 +8,7 @@ import gradio as gr
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # ========== CONFIG ==========
-MODEL_ID = "Anshrah/qwen3-4b-software-arch-distilled_02"  # Your distilled model
+MODEL_ID = "Anshrah/qwen3-4b-software-arch-distilled_03"  # Your distilled model
 HISTORY_TURNS = 4
 REQUESTED_MAX_NEW_TOKENS = 8192 #2500 previous
 SAFETY_MARGIN_TOKENS = 32
