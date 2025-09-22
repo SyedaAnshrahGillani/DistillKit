@@ -410,21 +410,41 @@ class ProgressiveULDTrainer:
             return None, "FAILED"
     
     def compute_simple_uld_loss(self, teacher_logits: torch.Tensor, student_logits: torch.Tensor) -> torch.Tensor:
-        """Simplified ULD loss computation"""
+        """Fixed ULD loss computation"""
+        # Temperature scaling for smoother distributions
+        temperature = 3.0
+        teacher_scaled = teacher_logits / temperature
+        student_scaled = student_logits / temperature
+    
         # Convert to probabilities
-        teacher_probs = F.softmax(teacher_logits, dim=-1)
-        student_probs = F.softmax(student_logits, dim=-1)
+        teacher_probs = F.softmax(teacher_scaled, dim=-1)
+        student_probs = F.softmax(student_scaled, dim=-1)
         
-        # Simple approximation: L1 distance between sorted probabilities
-        teacher_sorted, _ = torch.sort(teacher_probs, dim=-1, descending=True)
-        student_sorted, _ = torch.sort(student_probs, dim=-1, descending=True)
-        
-        # Pad to same size
-        max_vocab = max(teacher_sorted.size(-1), student_sorted.size(-1))
-        teacher_padded = F.pad(teacher_sorted, (0, max_vocab - teacher_sorted.size(-1)))
-        student_padded = F.pad(student_sorted, (0, max_vocab - student_sorted.size(-1)))
-        
-        return torch.mean(torch.abs(teacher_padded - student_padded))
+        # Handle vocabulary size difference by truncating to smaller vocab
+        min_vocab = min(teacher_probs.size(-1), student_probs.size(-1))
+        teacher_truncated = teacher_probs[..., :min_vocab]
+        student_truncated = student_probs[..., :min_vocab]
+    
+        # KL divergence component (core of ULD)
+        kl_loss = F.kl_div(
+            F.log_softmax(student_truncated, dim=-1),
+            teacher_truncated,
+            reduction='batchmean'
+        )
+    
+        # Wasserstein-1 approximation using sorted probabilities
+        teacher_sorted, _ = torch.sort(teacher_truncated, dim=-1, descending=True)
+        student_sorted, _ = torch.sort(student_truncated, dim=-1, descending=True)
+    
+        # Take only top-k for computational efficiency
+        top_k = min(1000, min_vocab)
+        wasserstein_loss = torch.mean(torch.abs(
+            torch.cumsum(teacher_sorted[..., :top_k], dim=-1) - 
+            torch.cumsum(student_sorted[..., :top_k], dim=-1)
+        ))
+    
+        # Combine both components
+        return 0.7 * kl_loss + 0.3 * wasserstein_loss
     
     def parse_teacher_logits(self, response_data: Dict) -> Tuple[str, torch.Tensor]:
         """Parse Together AI teacher response to extract logits"""
