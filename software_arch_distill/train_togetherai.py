@@ -342,7 +342,14 @@ class ProgressiveULDTrainer:
         try:
             # Get teacher response (cached)
             teacher_response = self.checkpoint.get_teacher_response_cached(prompt)
+            
+            # Parse teacher logits with confirmation checks
             teacher_text, teacher_logits = self.parse_teacher_logits(teacher_response)
+            
+            # Confirmation check: Teacher logits ready for ULD
+            print(f"📊 Teacher logits extracted successfully")
+            print(f"   Text: '{teacher_text[:50]}...' ({len(teacher_text)} chars)")
+            print(f"   Logits: {teacher_logits.shape} tensor ready for ULD")
             
             # Prepare student input
             full_text = prompt + " " + teacher_text
@@ -365,6 +372,12 @@ class ProgressiveULDTrainer:
             teacher_aligned = teacher_logits[:min_len].unsqueeze(0)
             student_aligned = student_gen_logits[:min_len].unsqueeze(0)
             
+            # Confirmation check: Alignment successful
+            print(f"🔄 Sequence alignment complete")
+            print(f"   Teacher aligned: {teacher_aligned.shape}")
+            print(f"   Student aligned: {student_aligned.shape}")
+            print(f"   Aligned length: {min_len} tokens")
+            
             # Compute ULD loss (simplified version for demo)
             uld_loss = self.compute_simple_uld_loss(teacher_aligned, student_aligned)
             
@@ -377,6 +390,12 @@ class ProgressiveULDTrainer:
             
             # Combined loss (optimal ratio based on ULD research)
             total_loss = 0.4 * ce_loss + 0.6 * uld_loss
+            
+            # Final confirmation: Loss computation successful
+            print(f"💯 Loss computation successful")
+            print(f"   CE Loss: {ce_loss.item():.4f}")
+            print(f"   ULD Loss: {uld_loss.item():.4f}")
+            print(f"   Total Loss: {total_loss.item():.4f}")
             
             # Backward pass
             self.optimizer.zero_grad()
@@ -419,10 +438,19 @@ class ProgressiveULDTrainer:
         # Together AI provides logprobs differently than OpenAI/OpenRouter
         logprobs_data = choice["logprobs"]
         
+        # Confirmation check 1: Logprobs structure received
+        print(f"✅ Logprobs structure received from Together AI")
+        print(f"   Available keys: {list(logprobs_data.keys())}")
+        
         # Extract token logprobs
         if "token_logprobs" in logprobs_data and "tokens" in logprobs_data:
             token_logprobs = logprobs_data["token_logprobs"]
             tokens = logprobs_data["tokens"]
+            
+            # Confirmation check 2: Token-based format
+            print(f"✅ Using token_logprobs format")
+            print(f"   Number of tokens: {len(tokens)}")
+            print(f"   Sample tokens: {tokens[:3] if len(tokens) > 0 else 'None'}")
             
             # Create simple logits tensor
             logits_list = []
@@ -450,6 +478,14 @@ class ProgressiveULDTrainer:
         elif "content" in logprobs_data:
             # Alternative format - similar to OpenAI
             content_logprobs = logprobs_data["content"]
+            
+            # Confirmation check 3: Content-based format
+            print(f"✅ Using content logprobs format")
+            print(f"   Number of content items: {len(content_logprobs)}")
+            if len(content_logprobs) > 0:
+                first_item = content_logprobs[0]
+                print(f"   Sample content keys: {list(first_item.keys())}")
+            
             logits_list = []
             vocab_size = 50000
             
@@ -472,7 +508,13 @@ class ProgressiveULDTrainer:
         if not logits_list:
             raise RuntimeError("No logits extracted from Together AI response")
         
-        return generated_text, torch.stack(logits_list)
+        # Final confirmation check: Logits tensor creation
+        logits_tensor = torch.stack(logits_list)
+        print(f"✅ Successfully created logits tensor: {logits_tensor.shape}")
+        print(f"   Generated text length: {len(generated_text.split())} words")
+        print(f"   Logits shape: [{logits_tensor.shape[0]} tokens x {logits_tensor.shape[1]} vocab]")
+        
+        return generated_text, logits_tensor
     
     def run_training(self, examples: List[Dict]):
         """Run complete progressive training"""
