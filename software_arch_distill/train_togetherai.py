@@ -342,14 +342,7 @@ class ProgressiveULDTrainer:
         try:
             # Get teacher response (cached)
             teacher_response = self.checkpoint.get_teacher_response_cached(prompt)
-            
-            # Parse teacher logits with confirmation checks
             teacher_text, teacher_logits = self.parse_teacher_logits(teacher_response)
-            
-            # Confirmation check: Teacher logits ready for ULD
-            print(f"📊 Teacher logits extracted successfully")
-            print(f"   Text: '{teacher_text[:50]}...' ({len(teacher_text)} chars)")
-            print(f"   Logits: {teacher_logits.shape} tensor ready for ULD")
             
             # Prepare student input
             full_text = prompt + " " + teacher_text
@@ -372,12 +365,6 @@ class ProgressiveULDTrainer:
             teacher_aligned = teacher_logits[:min_len].unsqueeze(0)
             student_aligned = student_gen_logits[:min_len].unsqueeze(0)
             
-            # Confirmation check: Alignment successful
-            print(f"🔄 Sequence alignment complete")
-            print(f"   Teacher aligned: {teacher_aligned.shape}")
-            print(f"   Student aligned: {student_aligned.shape}")
-            print(f"   Aligned length: {min_len} tokens")
-            
             # Compute ULD loss (simplified version for demo)
             uld_loss = self.compute_simple_uld_loss(teacher_aligned, student_aligned)
             
@@ -390,12 +377,6 @@ class ProgressiveULDTrainer:
             
             # Combined loss (optimal ratio based on ULD research)
             total_loss = 0.4 * ce_loss + 0.6 * uld_loss
-            
-            # Final confirmation: Loss computation successful
-            print(f"💯 Loss computation successful")
-            print(f"   CE Loss: {ce_loss.item():.4f}")
-            print(f"   ULD Loss: {uld_loss.item():.4f}")
-            print(f"   Total Loss: {total_loss.item():.4f}")
             
             # Backward pass
             self.optimizer.zero_grad()
@@ -410,42 +391,21 @@ class ProgressiveULDTrainer:
             return None, "FAILED"
     
     def compute_simple_uld_loss(self, teacher_logits: torch.Tensor, student_logits: torch.Tensor) -> torch.Tensor:
-        """Fixed ULD loss computation"""
-        # Temperature scaling for smoother distributions
-        temperature = 3.0
-        teacher_scaled = teacher_logits / temperature
-        student_scaled = student_logits / temperature
-    
+        """Simplified ULD loss computation"""
         # Convert to probabilities
-        teacher_probs = F.softmax(teacher_scaled, dim=-1)
-        student_probs = F.softmax(student_scaled, dim=-1)
-    
-        # Handle vocabulary size difference by truncating to smaller vocab
-        min_vocab = min(teacher_probs.size(-1), student_probs.size(-1))
-        teacher_truncated = teacher_probs[..., :min_vocab]
-        student_truncated = student_probs[..., :min_vocab]
-    
-        # KL divergence component (core of ULD) - fixed direction
-        kl_loss = F.kl_div(
-            F.log_softmax(student_scaled[..., :min_vocab], dim=-1),
-            F.softmax(teacher_scaled[..., :min_vocab], dim=-1),
-            reduction='batchmean'
-        )
-    
-        # Wasserstein-1 approximation using sorted probabilities
-        teacher_sorted, _ = torch.sort(teacher_truncated, dim=-1, descending=True)
-        student_sorted, _ = torch.sort(student_truncated, dim=-1, descending=True)
-    
-        # Take only top-k for computational efficiency
-        top_k = min(1000, min_vocab)
-        wasserstein_loss = torch.mean(torch.abs(
-            torch.cumsum(teacher_sorted[..., :top_k], dim=-1) - 
-            torch.cumsum(student_sorted[..., :top_k], dim=-1)
-        ))
-    
-        # Combine both components
-        return 0.7 * kl_loss + 0.3 * wasserstein_loss
+        teacher_probs = F.softmax(teacher_logits, dim=-1)
+        student_probs = F.softmax(student_logits, dim=-1)
         
+        # Simple approximation: L1 distance between sorted probabilities
+        teacher_sorted, _ = torch.sort(teacher_probs, dim=-1, descending=True)
+        student_sorted, _ = torch.sort(student_probs, dim=-1, descending=True)
+        
+        # Pad to same size
+        max_vocab = max(teacher_sorted.size(-1), student_sorted.size(-1))
+        teacher_padded = F.pad(teacher_sorted, (0, max_vocab - teacher_sorted.size(-1)))
+        student_padded = F.pad(student_sorted, (0, max_vocab - student_sorted.size(-1)))
+        
+        return torch.mean(torch.abs(teacher_padded - student_padded))
     
     def parse_teacher_logits(self, response_data: Dict) -> Tuple[str, torch.Tensor]:
         """Parse Together AI teacher response to extract logits"""
@@ -459,19 +419,10 @@ class ProgressiveULDTrainer:
         # Together AI provides logprobs differently than OpenAI/OpenRouter
         logprobs_data = choice["logprobs"]
         
-        # Confirmation check 1: Logprobs structure received
-        print(f"✅ Logprobs structure received from Together AI")
-        print(f"   Available keys: {list(logprobs_data.keys())}")
-        
         # Extract token logprobs
         if "token_logprobs" in logprobs_data and "tokens" in logprobs_data:
             token_logprobs = logprobs_data["token_logprobs"]
             tokens = logprobs_data["tokens"]
-            
-            # Confirmation check 2: Token-based format
-            print(f"✅ Using token_logprobs format")
-            print(f"   Number of tokens: {len(tokens)}")
-            print(f"   Sample tokens: {tokens[:3] if len(tokens) > 0 else 'None'}")
             
             # Create simple logits tensor
             logits_list = []
@@ -499,14 +450,6 @@ class ProgressiveULDTrainer:
         elif "content" in logprobs_data:
             # Alternative format - similar to OpenAI
             content_logprobs = logprobs_data["content"]
-            
-            # Confirmation check 3: Content-based format
-            print(f"✅ Using content logprobs format")
-            print(f"   Number of content items: {len(content_logprobs)}")
-            if len(content_logprobs) > 0:
-                first_item = content_logprobs[0]
-                print(f"   Sample content keys: {list(first_item.keys())}")
-            
             logits_list = []
             vocab_size = 50000
             
@@ -529,13 +472,7 @@ class ProgressiveULDTrainer:
         if not logits_list:
             raise RuntimeError("No logits extracted from Together AI response")
         
-        # Final confirmation check: Logits tensor creation
-        logits_tensor = torch.stack(logits_list)
-        print(f"✅ Successfully created logits tensor: {logits_tensor.shape}")
-        print(f"   Generated text length: {len(generated_text.split())} words")
-        print(f"   Logits shape: [{logits_tensor.shape[0]} tokens x {logits_tensor.shape[1]} vocab]")
-        
-        return generated_text, logits_tensor
+        return generated_text, torch.stack(logits_list)
     
     def run_training(self, examples: List[Dict]):
         """Run complete progressive training"""
