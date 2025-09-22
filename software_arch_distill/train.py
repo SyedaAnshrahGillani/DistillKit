@@ -168,7 +168,7 @@ class DistillationCheckpoint:
         }
         
         payload = {
-            "model": "moonshotai/kimi-k2",
+            "model": "openai/gpt-4o-mini",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 512,  # Optimal balance: quality vs cost for architecture Q&A
             "temperature": 0.0,
