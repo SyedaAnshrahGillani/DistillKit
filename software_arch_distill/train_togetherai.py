@@ -99,7 +99,8 @@ class DistillationCheckpoint:
             # Load model
             model = AutoModelForCausalLM.from_pretrained(
                 self.model_dir, 
-                torch_dtype=torch.bfloat16
+                torch_dtype=torch.bfloat16,
+                device_map="auto" #use GPU
             )
             
             # Create optimizer
@@ -292,6 +293,11 @@ class ProgressiveULDTrainer:
         self.model, self.tokenizer, self.optimizer = self.checkpoint.load_model_checkpoint(
             student_model_name
         )
+
+        # force GPU utilization
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f" Using device: {self.device}")
+        self.model = self.model.to(self.device)
         
         print("🎯 Progressive ULD Trainer initialized with Together AI")
         self.checkpoint.print_status()
