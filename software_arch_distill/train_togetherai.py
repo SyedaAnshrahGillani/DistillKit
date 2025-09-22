@@ -346,7 +346,7 @@ class ProgressiveULDTrainer:
             
             # Prepare student input
             full_text = prompt + " " + teacher_text
-            inputs = self.tokenizer(full_text, return_tensors="pt", max_length=1024, truncation=True)
+            inputs = self.tokenizer(full_text, return_tensors="pt", max_length=1024, truncation=True, padding=True)
             
             # Student forward pass
             self.model.train()
