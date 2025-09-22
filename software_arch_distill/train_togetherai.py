@@ -419,16 +419,16 @@ class ProgressiveULDTrainer:
         # Convert to probabilities
         teacher_probs = F.softmax(teacher_scaled, dim=-1)
         student_probs = F.softmax(student_scaled, dim=-1)
-        
+    
         # Handle vocabulary size difference by truncating to smaller vocab
         min_vocab = min(teacher_probs.size(-1), student_probs.size(-1))
         teacher_truncated = teacher_probs[..., :min_vocab]
         student_truncated = student_probs[..., :min_vocab]
     
-        # KL divergence component (core of ULD)
+        # KL divergence component (core of ULD) - fixed direction
         kl_loss = F.kl_div(
-            F.log_softmax(student_truncated, dim=-1),
-            teacher_truncated,
+            F.log_softmax(student_scaled[..., :min_vocab], dim=-1),
+            F.softmax(teacher_scaled[..., :min_vocab], dim=-1),
             reduction='batchmean'
         )
     
@@ -445,6 +445,7 @@ class ProgressiveULDTrainer:
     
         # Combine both components
         return 0.7 * kl_loss + 0.3 * wasserstein_loss
+        
     
     def parse_teacher_logits(self, response_data: Dict) -> Tuple[str, torch.Tensor]:
         """Parse Together AI teacher response to extract logits"""
