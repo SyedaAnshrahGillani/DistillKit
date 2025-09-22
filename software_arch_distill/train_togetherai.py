@@ -122,7 +122,8 @@ class DistillationCheckpoint:
             tokenizer = AutoTokenizer.from_pretrained(model_name)
             model = AutoModelForCausalLM.from_pretrained(
                 model_name, 
-                torch_dtype=torch.bfloat16
+                torch_dtype=torch.bfloat16,
+                device_map="auto" #use GPU
             )
             
             lr = self.state["learning_rates"][self.state["current_phase"] - 1]
@@ -316,6 +317,8 @@ class ProgressiveULDTrainer:
         for prompt in test_prompts:
             try:
                 inputs = self.tokenizer(prompt, return_tensors="pt")
+                # GPU Changes
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
                 outputs = self.model.generate(
                     inputs.input_ids,
                     max_new_tokens=50,
@@ -353,7 +356,7 @@ class ProgressiveULDTrainer:
             # Prepare student input
             full_text = prompt + " " + teacher_text
             inputs = self.tokenizer(full_text, return_tensors="pt", max_length=1024, truncation=True, padding=True)
-            
+            inputs = {k: v.to(self.device) for k, v in inputs.items()} #for GPU
             # Student forward pass
             self.model.train()
             outputs = self.model(**inputs)
