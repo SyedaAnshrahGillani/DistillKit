@@ -160,7 +160,7 @@ def load_model_and_tokenizer():
         
         print(f"Model loaded successfully!")
         print(f"Parameters: {total_params:,} total, {trainable_params:,} trainable")
-        print(f"Memory usage: {get_memory_usage()}")
+        print(f"Memory will be tracked during inference")
         
         return model, tokenizer, True, device_info
         
