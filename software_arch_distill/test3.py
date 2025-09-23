@@ -72,7 +72,13 @@ def get_device_info():
         # Compute capability and memory bandwidth
         props = torch.cuda.get_device_properties(0)
         device_info["compute_capability"] = f"{props.major}.{props.minor}"
-        device_info["memory_bandwidth"] = f"{props.memory_clock_rate * props.memory_bus_width // 8 / 1e6:.0f} GB/s"
+        
+        # Memory bandwidth calculation with fallback
+        try:
+            bandwidth_gbps = props.memory_clock_rate * props.memory_bus_width // 8 / 1e6
+            device_info["memory_bandwidth"] = f"{bandwidth_gbps:.0f} GB/s"
+        except AttributeError:
+            device_info["memory_bandwidth"] = "N/A"
     
     return device_info
 
