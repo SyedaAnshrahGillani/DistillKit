@@ -116,9 +116,7 @@ def load_model_and_tokenizer():
             device_map="auto",
             trust_remote_code=True,
             low_cpu_mem_usage=True,
-            use_cache=ENABLE_KV_CACHE,  # Enable KV caching
-            torch_compile=True,  # Enable graph compilation
-            attn_implementation="eager"  # Use optimized attention
+            use_cache=ENABLE_KV_CACHE  # Enable KV caching
         )
         
         # Enable eval mode and memory optimizations
@@ -167,54 +165,13 @@ def load_model_and_tokenizer():
         return model, tokenizer, True, device_info
         
     except Exception as e:
-        print(f"Failed to load distilled model: {e}")
-        print("Falling back to base model...")
-        
-        # Fallback with same optimizations
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(
-                "Qwen/Qwen3-4B-Thinking-2507", 
-                trust_remote_code=True,
-                use_fast=True,
-                padding_side="left"
-            )
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            if tokenizer.pad_token_id is None:
-                tokenizer.pad_token_id = tokenizer.eos_token_id
-                
-            model = AutoModelForCausalLM.from_pretrained(
-                "Qwen/Qwen3-4B-Thinking-2507",
-                torch_dtype=torch.float16,
-                device_map="auto",
-                trust_remote_code=True,
-                low_cpu_mem_usage=True,
-                use_cache=ENABLE_KV_CACHE,
-                attn_implementation="eager"
-            )
-            model.eval()
-            
-            if hasattr(model, 'gradient_checkpointing_disable'):
-                model.gradient_checkpointing_disable()
-                
-            model.generation_config.use_cache = ENABLE_KV_CACHE
-            model.generation_config.pad_token_id = tokenizer.pad_token_id
-            
-            try:
-                model.forward = torch.compile(model.forward, mode="reduce-overhead")
-                print("Base model compiled successfully")
-            except:
-                pass
-            
-            total_params = sum(p.numel() for p in model.parameters())
-            print(f"Base model loaded as fallback!")
-            print(f"Parameters: {total_params:,}")
-            
-            return model, tokenizer, False, device_info
-            
-        except Exception as e2:
-            print(f"Failed to load base model too: {e2}")
-            raise RuntimeError("Could not load any model")
+        print(f"CRITICAL: Failed to load distilled model: {e}")
+        print(f"Your distilled model '{MODEL_ID}' could not be loaded.")
+        print("Please check:")
+        print("1. Model ID is correct")
+        print("2. Model is accessible") 
+        print("3. All dependencies are installed")
+        raise RuntimeError(f"Cannot proceed without your distilled model: {e}")
 
 # Load model with optimizations
 try:
