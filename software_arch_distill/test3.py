@@ -10,9 +10,9 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 # ========== CONFIG ==========
 MODEL_ID = "Anshrah/qwen3-4b-software-arch-distilled_04"  # Your distilled model
 HISTORY_TURNS = 4
-REQUESTED_MAX_NEW_TOKENS = 8192
+REQUESTED_MAX_NEW_TOKENS = 2500
 SAFETY_MARGIN_TOKENS = 32
-TEMPERATURE = 0.8
+TEMPERATURE = 0.6
 TOP_P = 0.9
 REPETITION_PENALTY = 1.1
 # ============================
