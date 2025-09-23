@@ -59,7 +59,7 @@ def get_device_info():
 # === Load model & tokenizer once ===
 def load_model_and_tokenizer():
     device_info = get_device_info()
-    print(f"🖥️  Device Info: {device_info['device_name']} | CUDA: {device_info['cuda_available']}")
+    print(f"  Device Info: {device_info['device_name']} | CUDA: {device_info['cuda_available']}")
     
     print(f"Loading distilled model: {MODEL_ID}")
     
@@ -225,7 +225,7 @@ def chat(user_message: str, history, progress=gr.Progress()):
             thinking_content = "Thinking extraction failed"
 
         # Add timing and model info
-        model_info = "🧠 Distilled Model" if MODEL_LOADED else "📚 Base Model"
+        model_info = " Distilled Model" if MODEL_LOADED else " Base Model"
         memory_info = get_memory_usage()
         final_reply = content + f"\n\n{model_info} | ⏱ Time: {end - start:.2f}s | {memory_info}"
 
@@ -283,12 +283,12 @@ print("🧪 Testing model...")
 model_works = test_model()
 
 # === Gradio UI ===
-model_status = "🧠 Distilled Model Loaded" if MODEL_LOADED else "📚 Base Model (Fallback)"
-device_status = f"🖥️ {device_info['device_name']}" if device_info['cuda_available'] else "💻 CPU"
+model_status = " Distilled Model Loaded" if MODEL_LOADED else " Base Model (Fallback)"
+device_status = f" {device_info['device_name']}" if device_info['cuda_available'] else " CPU"
 
 with gr.Blocks(title="Senior Cloud Architect Assistant", theme=gr.themes.Soft()) as demo:
     gr.Markdown(f"# {model_status} {device_status}")
-    gr.Markdown("**Senior Cloud Architect Assistant** - Fine-tuned through ULD distillation with 15+ years of expertise")
+    gr.Markdown("**Senior Cloud Architect Assistant** - Fine-tuned through ULD distillation")
     
     with gr.Row():
         gr.Markdown(f"**Model:** `{MODEL_ID}`")
@@ -314,7 +314,7 @@ with gr.Blocks(title="Senior Cloud Architect Assistant", theme=gr.themes.Soft())
                     lines=2,
                     scale=4
                 )
-                send_btn = gr.Button("Send 🚀", variant="primary", scale=1)
+                send_btn = gr.Button("Send ", variant="primary", scale=1)
             
             with gr.Row():
                 clear_btn = gr.Button("Clear History 🗑️", variant="secondary")
