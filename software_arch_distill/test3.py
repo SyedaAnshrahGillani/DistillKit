@@ -81,13 +81,13 @@ def load_model_and_tokenizer():
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         
+        # Load model without flash attention to avoid GLIBC compatibility issues
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
             torch_dtype=torch.float16,
             device_map="auto",
             trust_remote_code=True,
-            low_cpu_mem_usage=True,
-            attn_implementation="flash_attention_2" if torch.cuda.is_available() else None
+            low_cpu_mem_usage=True
         )
         model.eval()
         
@@ -122,13 +122,13 @@ def load_model_and_tokenizer():
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
                 
+            # Load fallback model without flash attention
             model = AutoModelForCausalLM.from_pretrained(
                 "Qwen/Qwen3-4B-Thinking-2507",
                 torch_dtype=torch.float16,
                 device_map="auto",
                 trust_remote_code=True,
-                low_cpu_mem_usage=True,
-                attn_implementation="flash_attention_2" if torch.cuda.is_available() else None
+                low_cpu_mem_usage=True
             )
             model.eval()
             
