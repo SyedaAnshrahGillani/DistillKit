@@ -56,7 +56,7 @@ class DistillationCheckpoint:
                 "total_loss": 0.0,
                 "phase_sizes": [10, 50, 200, 1000],  # Optimal progressive phases
                 "epochs_per_phase": [1, 2, 2, 3],  # Optimal epochs per phase
-                "learning_rates": [5e-6, 3e-6, 2e-6, 1e-6],  # Optimal decreasing LR
+                "learning_rates": [5e-6, 3e-6, 2e-6, 5e-6],  # Optimal decreasing LR 1e-6
                 "training_history": [],
                 "validation_history": [],
                 "last_saved": None,
