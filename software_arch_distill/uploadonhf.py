@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Configuration
 HF_USERNAME = "Anshrah"  # Replace with your Hugging Face username
-MODEL_NAME = "qwen3-4b-software-arch-distilled_05"  # Choose your model name
+MODEL_NAME = "qwen3-4b-software-arch-distilled_06"  # Choose your model name
 LOCAL_MODEL_PATH = "./distillation_checkpoints/model"  # Path where your model is saved
 CHECKPOINT_STATE_PATH = "./distillation_checkpoints/training_state.json"  # Training state file
 
