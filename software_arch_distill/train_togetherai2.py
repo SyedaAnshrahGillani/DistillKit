@@ -297,6 +297,10 @@ class ProgressiveULDTrainer:
             student_model_name
         )
         
+        # Store vocab size from tokenizer (instead of hardcoding 50000)
+        self.vocab_size = self.tokenizer.vocab_size
+        print("Vocab Size:",self.vocab_size)
+        
         print("🎯 Progressive ULD Trainer initialized with Together AI")
         self.checkpoint.print_status()
     
@@ -307,7 +311,7 @@ class ProgressiveULDTrainer:
             "Explain microservices briefly.",
             "How do you design scalable systems?"
         ]
-        
+
         self.model.eval()
         results = {"coherent": 0, "repetitive": 0, "failed": 0}
         
@@ -407,9 +411,9 @@ class ProgressiveULDTrainer:
             
             # Backward pass
             self.optimizer.zero_grad()
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            self.optimizer.step()
+            total_loss.backward() #computes gradients of the loss with respect to all model weights (how to change params to reduce error)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0) #normalize gradients
+            self.optimizer.step() #updates the model’s weights
             
             return total_loss.item(), "ULD"
             
@@ -453,8 +457,9 @@ class ProgressiveULDTrainer:
             
             # Create simple logits tensor
             logits_list = []
-            vocab_size = 50000
-            
+            #vocab_size = 50000 #  as a safe upper bound (common vocab size for many LLMs). 160000,  150000
+            vocab_size = self.vocab_size
+
             for i, (token, logprob) in enumerate(zip(tokens, token_logprobs)):
                 if logprob is None:
                     continue
@@ -611,7 +616,7 @@ if __name__ == "__main__":
     from huggingface_hub import hf_hub_download
     
     file_path = hf_hub_download(
-        repo_id="ajibawa-2023/Software-Architecture",
+        repo_id="ajibawa-2023/Software-Architecture", #400000
         filename="Software_Architecture_Final.jsonl",
         repo_type="dataset"
     )
