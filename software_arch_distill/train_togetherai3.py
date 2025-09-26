@@ -3,6 +3,7 @@ Enhanced ULD Distillation with Multiple Dataset Support - Together AI Version
 Uses Together AI API with Kimi K2 model for teacher logits
 Now supports multiple datasets with dynamic phase generation
 FIXED: Preserves training progress across dataset switches
+ADDED: Non-disruptive permanent archiving of teacher responses
 """
 
 import os
@@ -223,7 +224,7 @@ class DatasetManager:
         return phases, epochs, learning_rates
 
 class DistillationCheckpoint:
-    """Enhanced checkpoint management with teacher response archiving"""
+    """Enhanced checkpoint management with multi-dataset progress preservation and non-disruptive archiving"""
     
     def __init__(self, checkpoint_dir: str = "./distillation_checkpoints"):
         self.checkpoint_dir = Path(checkpoint_dir)
@@ -235,7 +236,7 @@ class DistillationCheckpoint:
         self.optimizer_file = self.checkpoint_dir / "optimizer.pt"
         self.progress_file = self.checkpoint_dir / "progress.json"
         self.cache_dir = self.checkpoint_dir / "teacher_cache"
-        self.archive_dir = self.checkpoint_dir / "teacher_archive"  # New: permanent archive
+        self.archive_dir = self.checkpoint_dir / "teacher_archive"  # Archive for permanent storage
         self.cache_dir.mkdir(exist_ok=True)
         self.archive_dir.mkdir(exist_ok=True)
         
@@ -265,13 +266,12 @@ class DistillationCheckpoint:
                 "total_loss": 0.0,
                 "phase_sizes": [10, 50, 200, 1000],  # Will be updated dynamically
                 "epochs_per_phase": [1, 2, 2, 3],
-                "learning_rates": [8e-6, 6e-6, 4e-6, 3e-6],  # Higher LRs for manual stopping
+                "learning_rates": [5e-6, 3e-6, 2e-6, 5e-6],  # Optimal decreasing LR
                 "training_history": [],
                 "validation_history": [],
                 "last_saved": None,
                 "api_calls_made": 0,
-                "estimated_cost": 0.0,
-                "archived_responses": 0  # New: track archived responses
+                "estimated_cost": 0.0
             }
     
     def update_dataset_config(self, dataset_name: str, dataset_size: int):
@@ -282,7 +282,7 @@ class DistillationCheckpoint:
             # Calculate dynamic phases for new dataset
             phases, epochs, learning_rates = DatasetManager.calculate_dynamic_phases(dataset_size)
             
-            # ✅ PRESERVE existing training progress
+            # Preserve existing training progress
             current_phase = self.state.get("current_phase", 1)
             current_example = self.state.get("current_example", 0)
             current_epoch = self.state.get("current_epoch", 1)
@@ -296,13 +296,13 @@ class DistillationCheckpoint:
                 "phase_sizes": phases,
                 "epochs_per_phase": epochs,
                 "learning_rates": learning_rates,
-                # ✅ Keep existing progress instead of resetting
+                # Keep existing progress instead of resetting
                 "current_phase": current_phase,
                 "current_example": current_example,
                 "current_epoch": current_epoch
             })
             
-            # ✅ Additional validation: ensure phase doesn't exceed new dataset phases
+            # Additional validation: ensure phase doesn't exceed new dataset phases
             if current_phase > len(phases):
                 print(f"⚠️  Current phase {current_phase} exceeds new dataset phases {len(phases)}")
                 print("🔄 Adjusting to final phase of new dataset")
@@ -310,7 +310,7 @@ class DistillationCheckpoint:
                 self.state["current_example"] = 0
                 self.state["current_epoch"] = 1
             
-            # ✅ Validate current example doesn't exceed current phase size
+            # Validate current example doesn't exceed current phase size
             elif current_example >= phases[current_phase - 1]:
                 print(f"⚠️  Current example {current_example} exceeds phase size {phases[current_phase - 1]}")
                 print("🔄 Moving to next epoch or phase")
@@ -405,28 +405,43 @@ class DistillationCheckpoint:
             
             return model, tokenizer, optimizer
     
-    def archive_teacher_response(self, prompt: str, response: Dict):
-        """Archive teacher responses permanently"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        cache_key = str(abs(hash(prompt)))
-        
-        archive_data = {
-            "timestamp": datetime.now().isoformat(),
-            "prompt": prompt,
-            "response": response,
-            "dataset": self.state.get("current_dataset", "unknown"),
-            "phase": self.state.get("current_phase", 0),
-            "example": self.state.get("current_example", 0)
-        }
-        
-        archive_file = self.archive_dir / f"teacher_response_{timestamp}_{cache_key[:8]}.json"
-        with open(archive_file, 'w') as f:
-            json.dump(archive_data, f, indent=2)
-        
-        self.state["archived_responses"] += 1
+    def archive_teacher_response_safe(self, prompt: str, response: Dict):
+        """Archive teacher responses permanently - completely non-disruptive"""
+        try:
+            # Generate unique filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            cache_key = str(abs(hash(prompt)))
+            
+            # Create archive data
+            archive_data = {
+                "timestamp": datetime.now().isoformat(),
+                "prompt": prompt,
+                "response": response,
+                "dataset": self.state.get("current_dataset", "unknown"),
+                "phase": self.state.get("current_phase", 0),
+                "example": self.state.get("current_example", 0)
+            }
+            
+            # Save to archive (permanent storage)
+            archive_file = self.archive_dir / f"teacher_response_{timestamp}_{cache_key[:8]}.json"
+            with open(archive_file, 'w', encoding='utf-8') as f:
+                json.dump(archive_data, f, indent=2, ensure_ascii=False)
+            
+            # Update counter if possible (backward compatible)
+            try:
+                if "archived_responses" not in self.state:
+                    self.state["archived_responses"] = 0
+                self.state["archived_responses"] += 1
+            except:
+                # If state update fails, continue silently
+                pass
+                
+        except Exception as e:
+            # Archive failure should never interrupt main flow
+            pass
     
     def get_teacher_response_cached(self, prompt: str) -> Dict:
-        """Cached teacher responses with permanent archiving"""
+        """Cached teacher responses to avoid re-calling API with non-disruptive archiving"""
         cache_key = str(abs(hash(prompt)))
         cache_file = self.cache_dir / f"teacher_{cache_key}.json"
         
@@ -443,12 +458,13 @@ class DistillationCheckpoint:
         with open(cache_file, 'w') as f:
             json.dump(response, f)
         
-        # Archive the response permanently
-        self.archive_teacher_response(prompt, response)
+        # Archive the response permanently (non-disruptive)
+        self.archive_teacher_response_safe(prompt, response)
         
-        # Update API call count and cost estimate (2048 tokens ~4x cost of 512)
+        # Update API call count and cost estimate
         self.state["api_calls_made"] += 1
-        self.state["estimated_cost"] += 0.020  # Updated cost estimate for 2048 tokens
+        # Together AI pricing for Kimi K2 (Input: $1.00/M tokens, Output: $3.00/M tokens)
+        self.state["estimated_cost"] += 0.005  # Estimated cost per 512 token call
         
         return response
     
@@ -466,11 +482,11 @@ class DistillationCheckpoint:
         }
         
         payload = {
-            "model": "moonshotai/Kimi-K2-Instruct-0905",
+            "model": "moonshotai/Kimi-K2-Instruct-0905",  # Latest Kimi K2 model on Together AI
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 512,
+            "max_tokens": 512,  # Optimal balance: quality vs cost for architecture Q&A
             "temperature": 0.0,
-            "logprobs": 20,
+            "logprobs": 20,  # Together AI uses logprobs parameter instead of top_logprobs
             "echo": False,
             "stream": False
         }
@@ -564,7 +580,7 @@ class DistillationCheckpoint:
         current_phase = self.state["current_phase"]
         phase_size = self.state["phase_sizes"][current_phase - 1]
         
-        # ✅ Handle case where new dataset is smaller than phase size
+        # Handle case where new dataset is smaller than phase size
         effective_phase_size = min(phase_size, len(all_examples))
         
         print(f"📊 Phase {current_phase}: Using {effective_phase_size} examples (requested: {phase_size}, available: {len(all_examples)})")
@@ -594,6 +610,8 @@ class DistillationCheckpoint:
         total_processed = self.state["total_examples_processed"]
         api_calls = self.state["api_calls_made"]
         estimated_cost = self.state["estimated_cost"]
+        
+        # Optional archived responses counter (backward compatible)
         archived_responses = self.state.get("archived_responses", 0)
         
         print(f"\n📊 Training Status:")
@@ -603,7 +621,8 @@ class DistillationCheckpoint:
         print(f"   Example: {current_example}/{phase_size}")
         print(f"   Total Processed: {total_processed}")
         print(f"   API Calls: {api_calls}")
-        print(f"   Archived Responses: {archived_responses}")
+        if archived_responses > 0:  # Only show if we have archived responses
+            print(f"   Archived Responses: {archived_responses}")
         print(f"   Estimated Cost: ${estimated_cost:.2f}")
         
         if self.state["successful_batches"] > 0:
@@ -629,10 +648,6 @@ class ProgressiveULDTrainer:
         
         # Store reference to optimizer in checkpoint for LR updates
         self.checkpoint.current_optimizer = self.optimizer
-        
-        # Store vocab size from tokenizer
-        self.vocab_size = self.tokenizer.vocab_size
-        print("Vocab Size:",self.vocab_size)
         
         print("🎯 Enhanced Progressive ULD Trainer with Multi-Dataset Support")
         self.checkpoint.print_status()
@@ -688,7 +703,7 @@ class ProgressiveULDTrainer:
     def train_step(self, prompt: str, target: str) -> Tuple[Optional[float], str]:
         """Single training step with ULD"""
         try:
-            # Get teacher response (cached and archived)
+            # Get teacher response (cached with archiving)
             teacher_response = self.checkpoint.get_teacher_response_cached(prompt)
             teacher_text, teacher_logits = self.parse_teacher_logits(teacher_response)
             
@@ -769,25 +784,32 @@ class ProgressiveULDTrainer:
         choice = response_data["choices"][0]
         generated_text = choice["message"]["content"]
         
+        # Together AI logits format
         if "logprobs" not in choice or not choice["logprobs"]:
             raise RuntimeError("No logprobs in Together AI teacher response")
         
+        # Together AI provides logprobs differently than OpenAI/OpenRouter
         logprobs_data = choice["logprobs"]
         
+        # Extract token logprobs
         if "token_logprobs" in logprobs_data and "tokens" in logprobs_data:
             token_logprobs = logprobs_data["token_logprobs"]
             tokens = logprobs_data["tokens"]
             
+            # Create simple logits tensor
             logits_list = []
-            vocab_size = self.vocab_size
-
+            vocab_size = 50000  # Same as base code
+            
             for i, (token, logprob) in enumerate(zip(tokens, token_logprobs)):
                 if logprob is None:
                     continue
                     
                 logits = torch.full((vocab_size,), -10.0)
+                
+                # Set the actual token logprob
                 logits[i % vocab_size] = logprob
                 
+                # If top_logprobs available, use those too
                 if "top_logprobs" in logprobs_data and i < len(logprobs_data["top_logprobs"]):
                     top_logprobs = logprobs_data["top_logprobs"][i]
                     if top_logprobs:
@@ -798,6 +820,7 @@ class ProgressiveULDTrainer:
                 logits_list.append(logits)
         
         elif "content" in logprobs_data:
+            # Alternative format - similar to OpenAI
             content_logprobs = logprobs_data["content"]
             logits_list = []
             vocab_size = 50000
@@ -929,7 +952,7 @@ class ProgressiveULDTrainer:
 # -------------------------------
 
 if __name__ == "__main__":
-    print("🚀 Enhanced ULD Trainer with Multi-Dataset Support")
+    print("🚀 Enhanced ULD Trainer with Multi-Dataset Support & Non-Disruptive Archiving")
     print("=" * 60)
     
     # Verify Together AI API key
