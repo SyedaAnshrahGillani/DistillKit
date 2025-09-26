@@ -2,8 +2,7 @@
 Enhanced ULD Distillation with Multiple Dataset Support - Together AI Version
 Uses Together AI API with Kimi K2 model for teacher logits
 Now supports multiple datasets with dynamic phase generation
-FIXED: Preserves training progress across dataset switches
-ADDED: Non-disruptive permanent archiving of teacher responses
+FINAL VERSION: Clear logging and proper dataset curriculum management
 """
 
 import os
@@ -191,24 +190,20 @@ class DatasetManager:
     
     @staticmethod
     def calculate_dynamic_phases(dataset_size: int) -> Tuple[List[int], List[int], List[float]]:
-        """Calculate optimal phases based on dataset size - Higher LRs for manual stopping"""
+        """Calculate optimal phases based on dataset size"""
         if dataset_size <= 100:
-            # Small dataset - Aggressive learning
             phases = [10, 25, 50, min(dataset_size, 100)]
             epochs = [2, 3, 3, 4]
             learning_rates = [1e-5, 8e-6, 6e-6, 4e-6]
         elif dataset_size <= 1000:
-            # Medium dataset - Still aggressive
             phases = [20, 100, 300, min(dataset_size, 1000)]
             epochs = [2, 2, 3, 3]
             learning_rates = [8e-6, 6e-6, 4e-6, 3e-6]
         elif dataset_size <= 10000:
-            # Large dataset - Higher LRs for faster progress
             phases = [50, 200, 1000, 5000, min(dataset_size, 10000)]
             epochs = [1, 2, 2, 2, 3]
             learning_rates = [8e-6, 6e-6, 4e-6, 3e-6, 2e-6]
         else:
-            # Very large dataset - Keep high LRs since manual stopping
             phases = [100, 500, 2000, 10000, 50000, min(dataset_size, 100000)]
             epochs = [1, 1, 2, 2, 2, 3]
             learning_rates = [8e-6, 6e-6, 4e-6, 3e-6, 2e-6, 1e-6]
@@ -216,7 +211,7 @@ class DatasetManager:
         # Ensure phases don't exceed dataset size
         phases = [min(phase, dataset_size) for phase in phases]
         
-        print(f"📊 Dynamic phases calculated for {dataset_size} examples (Higher LRs for manual stopping):")
+        print(f"📊 Dynamic phases calculated for {dataset_size} examples:")
         print(f"   Phases: {phases}")
         print(f"   Epochs per phase: {epochs}")
         print(f"   Learning rates: {learning_rates}")
@@ -224,7 +219,7 @@ class DatasetManager:
         return phases, epochs, learning_rates
 
 class DistillationCheckpoint:
-    """Enhanced checkpoint management with multi-dataset progress preservation and non-disruptive archiving"""
+    """Enhanced checkpoint management with multi-dataset support and archiving"""
     
     def __init__(self, checkpoint_dir: str = "./distillation_checkpoints"):
         self.checkpoint_dir = Path(checkpoint_dir)
@@ -236,7 +231,7 @@ class DistillationCheckpoint:
         self.optimizer_file = self.checkpoint_dir / "optimizer.pt"
         self.progress_file = self.checkpoint_dir / "progress.json"
         self.cache_dir = self.checkpoint_dir / "teacher_cache"
-        self.archive_dir = self.checkpoint_dir / "teacher_archive"  # Archive for permanent storage
+        self.archive_dir = self.checkpoint_dir / "teacher_archive"
         self.cache_dir.mkdir(exist_ok=True)
         self.archive_dir.mkdir(exist_ok=True)
         
@@ -249,7 +244,8 @@ class DistillationCheckpoint:
             print(f"📂 Loading existing training state from {self.state_file}")
             with open(self.state_file, 'r') as f:
                 state = json.load(f)
-                print(f"🔄 Resuming from: Dataset '{state.get('current_dataset', 'Unknown')}', "
+                dataset_name = state.get('current_dataset', 'Unknown')
+                print(f"🔄 Resuming from: Dataset '{dataset_name}', "
                       f"Phase {state['current_phase']}, Example {state['current_example']}")
                 return state
         else:
@@ -264,9 +260,9 @@ class DistillationCheckpoint:
                 "total_examples_processed": 0,
                 "successful_batches": 0,
                 "total_loss": 0.0,
-                "phase_sizes": [10, 50, 200, 1000],  # Will be updated dynamically
+                "phase_sizes": [10, 50, 200, 1000],
                 "epochs_per_phase": [1, 2, 2, 3],
-                "learning_rates": [5e-6, 3e-6, 2e-6, 5e-6],  # Optimal decreasing LR
+                "learning_rates": [5e-6, 3e-6, 2e-6, 5e-6],
                 "training_history": [],
                 "validation_history": [],
                 "last_saved": None,
@@ -274,40 +270,24 @@ class DistillationCheckpoint:
                 "estimated_cost": 0.0
             }
     
- doesn't exceed new dataset phases
-            if current_phase > len(phases):
-                print(f"⚠️  Current phase {current_phase} exceeds new dataset phases {len(phases)}")
-                print("🔄 Adjusting to final phase of new dataset")
-                self.state["current_phase"] = len(phases)
-                self.state["current_example"] = 0
-                self.state["current_epoch"] = 1
-            
-            # Validate current example doesn't exceed current phase size
-            elif current_example >= phases[current_phase - 1]:
-                print(f"⚠️  Current example {current_example} exceeds phase size {phases[current_phase - 1]}")
-                print("🔄 Moving to next epoch or phase")
-                
-                # Check if we can advance to next epoch in same phase
-                if current_epoch < epochs[current_phase - 1]:
-                    self.state["current_epoch"] = current_epoch + 1
-                    self.state["current_example"] = 0
-                    print(f"📚 Advanced to Epoch {self.state['current_epoch']} of Phase {current_phase}")
-                else:
-                    # Move to next phase if available
-                    if current_phase < len(phases):
-                        self.state["current_phase"] = current_phase + 1
-                        self.state["current_example"] = 0
-                        self.state["current_epoch"] = 1
-                        print(f"🚀 Advanced to Phase {self.state['current_phase']}")
-                    else:
-                        # Training complete
-                        self.state["current_phase"] = len(phases) + 1
-                        print("🎉 Training appears to be complete!")
-            
-            self.save_state()
-            print(f"✅ Dataset configuration updated, training will continue from saved progress")
-        else:
-            print(f"📋 Same dataset selected: {dataset_name} - continuing with existing progress")
+    def update_dataset_config(self, dataset_name: str, dataset_size: int):
+        """Update dataset configuration and reset phase progression for new curriculum"""
+        # Calculate dynamic phases for new dataset
+        phases, epochs, learning_rates = DatasetManager.calculate_dynamic_phases(dataset_size)
+        
+        # Update dataset configuration
+        print(f"📋 Updating dataset configuration: {dataset_name}")
+        self.state["current_dataset"] = dataset_name
+        self.state["dataset_size"] = dataset_size
+        self.state["phase_sizes"] = phases
+        self.state["epochs_per_phase"] = epochs
+        self.state["learning_rates"] = learning_rates
+        
+        # Reset phase progression for new dataset curriculum
+        # Model weights and training history are preserved
+        print(f"🔄 Starting new dataset curriculum (model knowledge preserved)")
+        
+        self.save_state()
     
     def save_state(self):
         """Save current training state"""
@@ -321,11 +301,9 @@ class DistillationCheckpoint:
         """Save model, tokenizer, and optimizer state"""
         print(f"💾 Saving model checkpoint...")
         
-        # Save model and tokenizer
         model.save_pretrained(self.model_dir)
         tokenizer.save_pretrained(self.model_dir)
         
-        # Save optimizer state
         torch.save({
             'optimizer_state_dict': optimizer.state_dict(),
             'model_state_dict': model.state_dict(),
@@ -344,13 +322,11 @@ class DistillationCheckpoint:
                 torch_dtype=torch.bfloat16
             )
             
-            # Create optimizer with current learning rate
             current_phase = self.state.get("current_phase", 1)
             lr_index = min(current_phase - 1, len(self.state["learning_rates"]) - 1)
             lr = self.state["learning_rates"][lr_index]
             optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
             
-            # Load optimizer state if exists
             if self.optimizer_file.exists():
                 checkpoint = torch.load(self.optimizer_file)
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -380,11 +356,9 @@ class DistillationCheckpoint:
     def archive_teacher_response_safe(self, prompt: str, response: Dict):
         """Archive teacher responses permanently - completely non-disruptive"""
         try:
-            # Generate unique filename
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             cache_key = str(abs(hash(prompt)))
             
-            # Create archive data
             archive_data = {
                 "timestamp": datetime.now().isoformat(),
                 "prompt": prompt,
@@ -394,26 +368,22 @@ class DistillationCheckpoint:
                 "example": self.state.get("current_example", 0)
             }
             
-            # Save to archive (permanent storage)
             archive_file = self.archive_dir / f"teacher_response_{timestamp}_{cache_key[:8]}.json"
             with open(archive_file, 'w', encoding='utf-8') as f:
                 json.dump(archive_data, f, indent=2, ensure_ascii=False)
             
-            # Update counter if possible (backward compatible)
             try:
                 if "archived_responses" not in self.state:
                     self.state["archived_responses"] = 0
                 self.state["archived_responses"] += 1
             except:
-                # If state update fails, continue silently
                 pass
                 
         except Exception as e:
-            # Archive failure should never interrupt main flow
             pass
     
     def get_teacher_response_cached(self, prompt: str) -> Dict:
-        """Cached teacher responses to avoid re-calling API with non-disruptive archiving"""
+        """Cached teacher responses with non-disruptive archiving"""
         cache_key = str(abs(hash(prompt)))
         cache_file = self.cache_dir / f"teacher_{cache_key}.json"
         
@@ -422,21 +392,16 @@ class DistillationCheckpoint:
             with open(cache_file, 'r') as f:
                 return json.load(f)
         
-        # Make API call
         print(f"🌐 Making API call to teacher (Together AI)...")
         response = self.call_teacher_api(prompt)
         
-        # Cache the response
         with open(cache_file, 'w') as f:
             json.dump(response, f)
         
-        # Archive the response permanently (non-disruptive)
         self.archive_teacher_response_safe(prompt, response)
         
-        # Update API call count and cost estimate
         self.state["api_calls_made"] += 1
-        # Together AI pricing for Kimi K2 (Input: $1.00/M tokens, Output: $3.00/M tokens)
-        self.state["estimated_cost"] += 0.005  # Estimated cost per 512 token call
+        self.state["estimated_cost"] += 0.010  # Updated cost estimate for 1024 token calls
         
         return response
     
@@ -454,11 +419,11 @@ class DistillationCheckpoint:
         }
         
         payload = {
-            "model": "moonshotai/Kimi-K2-Instruct-0905",  # Latest Kimi K2 model on Together AI
+            "model": "moonshotai/Kimi-K2-Instruct-0905",
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 512,  # Optimal balance: quality vs cost for architecture Q&A
+            "max_tokens": 1024,  # Increased for longer, more detailed teacher responses
             "temperature": 0.0,
-            "logprobs": 20,  # Together AI uses logprobs parameter instead of top_logprobs
+            "logprobs": 20,
             "echo": False,
             "stream": False
         }
@@ -493,7 +458,6 @@ class DistillationCheckpoint:
         self.state["total_loss"] += loss
         self.state["successful_batches"] += 1
         
-        # Keep only last 1000 entries
         if len(self.state["training_history"]) > 1000:
             self.state["training_history"] = self.state["training_history"][-1000:]
     
@@ -513,19 +477,14 @@ class DistillationCheckpoint:
         current_phase_size = self.state["phase_sizes"][self.state["current_phase"] - 1]
         epochs_for_phase = self.state["epochs_per_phase"][self.state["current_phase"] - 1]
         
-        # Check if we completed current phase
         if self.state["current_example"] >= current_phase_size:
             if self.state["current_epoch"] >= epochs_for_phase:
-                # Move to next phase
                 self.state["current_phase"] += 1
                 self.state["current_example"] = 0
                 self.state["current_epoch"] = 1
                 print(f"🚀 Advanced to Phase {self.state['current_phase']}")
-                
-                # Update optimizer learning rate for new phase
                 self.update_optimizer_lr()
             else:
-                # Next epoch in same phase
                 self.state["current_epoch"] += 1
                 self.state["current_example"] = 0
                 print(f"📚 Advanced to Epoch {self.state['current_epoch']} of Phase {self.state['current_phase']}")
@@ -545,14 +504,12 @@ class DistillationCheckpoint:
         return self.state["current_phase"] > len(self.state["phase_sizes"])
     
     def get_current_examples(self, all_examples: List[Dict]) -> List[Dict]:
-        """Get examples for current phase - works across different datasets"""
+        """Get examples for current phase"""
         if self.is_training_complete():
             return []
         
         current_phase = self.state["current_phase"]
         phase_size = self.state["phase_sizes"][current_phase - 1]
-        
-        # Handle case where new dataset is smaller than phase size
         effective_phase_size = min(phase_size, len(all_examples))
         
         print(f"📊 Phase {current_phase}: Using {effective_phase_size} examples (requested: {phase_size}, available: {len(all_examples)})")
@@ -571,7 +528,6 @@ class DistillationCheckpoint:
         current_example = self.state["current_example"]
         current_epoch = self.state["current_epoch"]
         
-        # Handle case where phase might exceed available phases (edge case)
         if current_phase <= len(self.state["phase_sizes"]):
             phase_size = self.state["phase_sizes"][current_phase - 1]
             epochs_for_phase = self.state["epochs_per_phase"][current_phase - 1]
@@ -582,8 +538,6 @@ class DistillationCheckpoint:
         total_processed = self.state["total_examples_processed"]
         api_calls = self.state["api_calls_made"]
         estimated_cost = self.state["estimated_cost"]
-        
-        # Optional archived responses counter (backward compatible)
         archived_responses = self.state.get("archived_responses", 0)
         
         print(f"\n📊 Training Status:")
@@ -617,13 +571,15 @@ class ProgressiveULDTrainer:
         self.checkpoint = DistillationCheckpoint()
         self.student_model_name = student_model_name
         
-        # Load model, tokenizer, optimizer
         self.model, self.tokenizer, self.optimizer = self.checkpoint.load_model_checkpoint(
             student_model_name
         )
         
-        # Store reference to optimizer in checkpoint for LR updates
         self.checkpoint.current_optimizer = self.optimizer
+        
+        # Store vocab size for use in logits parsing
+        self.vocab_size = self.tokenizer.vocab_size
+        print(f"Vocab Size: {self.vocab_size}")
         
         print("🎯 Enhanced Progressive ULD Trainer with Multi-Dataset Support")
         self.checkpoint.print_status()
@@ -662,7 +618,6 @@ class ProgressiveULDTrainer:
                     skip_special_tokens=True
                 )
                 
-                # Check quality
                 words = generated.split()[:20]
                 if len(set(words)) < len(words) * 0.5:
                     results["repetitive"] += 1
@@ -679,7 +634,6 @@ class ProgressiveULDTrainer:
     def train_step(self, prompt: str, target: str) -> Tuple[Optional[float], str]:
         """Single training step with ULD"""
         try:
-            # Get teacher response (cached with archiving)
             teacher_response = self.checkpoint.get_teacher_response_cached(prompt)
             teacher_text, teacher_logits = self.parse_teacher_logits(teacher_response)
             
@@ -700,15 +654,12 @@ class ProgressiveULDTrainer:
             )
             prompt_len = prompt_inputs["input_ids"].shape[1]
             
-            # Student forward pass
             self.model.train()
             outputs = self.model(**inputs)
             student_logits = outputs.logits
             
-            # Extract generation portion
             student_gen_logits = student_logits[0, prompt_len-1:-1, :]
             
-            # Align sequences
             min_len = min(teacher_logits.shape[0], student_gen_logits.shape[0])
             if min_len <= 0:
                 return None, "NO_TOKENS"
@@ -716,20 +667,16 @@ class ProgressiveULDTrainer:
             teacher_aligned = teacher_logits[:min_len].unsqueeze(0)
             student_aligned = student_gen_logits[:min_len].unsqueeze(0)
             
-            # Compute ULD loss
             uld_loss = self.compute_simple_uld_loss(teacher_aligned, student_aligned)
             
-            # CE loss component
             labels = inputs["input_ids"][0, prompt_len:prompt_len+min_len]
             ce_loss = F.cross_entropy(
                 student_aligned.view(-1, student_aligned.size(-1)), 
                 labels.view(-1)
             )
             
-            # Combined loss
             total_loss = 0.4 * ce_loss + 0.6 * uld_loss
             
-            # Backward pass
             self.optimizer.zero_grad()
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -760,32 +707,25 @@ class ProgressiveULDTrainer:
         choice = response_data["choices"][0]
         generated_text = choice["message"]["content"]
         
-        # Together AI logits format
         if "logprobs" not in choice or not choice["logprobs"]:
             raise RuntimeError("No logprobs in Together AI teacher response")
         
-        # Together AI provides logprobs differently than OpenAI/OpenRouter
         logprobs_data = choice["logprobs"]
         
-        # Extract token logprobs
         if "token_logprobs" in logprobs_data and "tokens" in logprobs_data:
             token_logprobs = logprobs_data["token_logprobs"]
             tokens = logprobs_data["tokens"]
             
-            # Create simple logits tensor
             logits_list = []
-            vocab_size = 50000  # Same as base code
+            vocab_size = self.vocab_size  # Use dynamic vocab size from tokenizer
             
             for i, (token, logprob) in enumerate(zip(tokens, token_logprobs)):
                 if logprob is None:
                     continue
                     
                 logits = torch.full((vocab_size,), -10.0)
-                
-                # Set the actual token logprob
                 logits[i % vocab_size] = logprob
                 
-                # If top_logprobs available, use those too
                 if "top_logprobs" in logprobs_data and i < len(logprobs_data["top_logprobs"]):
                     top_logprobs = logprobs_data["top_logprobs"][i]
                     if top_logprobs:
@@ -796,10 +736,9 @@ class ProgressiveULDTrainer:
                 logits_list.append(logits)
         
         elif "content" in logprobs_data:
-            # Alternative format - similar to OpenAI
             content_logprobs = logprobs_data["content"]
             logits_list = []
-            vocab_size = 50000
+            vocab_size = self.vocab_size  # Use dynamic vocab size from tokenizer
             
             for token_data in content_logprobs:
                 logits = torch.full((vocab_size,), -10.0)
@@ -826,20 +765,17 @@ class ProgressiveULDTrainer:
         """Run complete progressive training with selected dataset"""
         print(f"🚀 Starting Progressive ULD Training on {dataset_name}")
         
-        # Update dataset configuration
         self.checkpoint.update_dataset_config(dataset_name, len(examples))
         
         while not self.checkpoint.is_training_complete():
             self.checkpoint.print_status()
             
-            # Get examples for current phase
             current_examples = self.checkpoint.get_current_examples(examples)
             
             if not current_examples:
                 print("❌ No examples for current phase")
                 break
             
-            # Train on current phase
             phase_success = self.train_phase(current_examples)
             
             if not phase_success:
@@ -865,14 +801,12 @@ class ProgressiveULDTrainer:
                 self.checkpoint.advance_progress()
                 continue
             
-            # Training step
             loss, mode = self.train_step(prompt, target)
             
             if loss is not None:
                 self.checkpoint.log_progress(loss, mode)
                 print(f"📈 Step {i}: Loss={loss:.4f}, Mode={mode}")
             
-            # Validation
             if self.checkpoint.should_validate():
                 validation = self.validate_model()
                 self.checkpoint.log_progress(loss or 0, mode, validation)
@@ -882,12 +816,10 @@ class ProgressiveULDTrainer:
                     print("❌ Model degradation detected - stopping phase")
                     return False
             
-            # Save checkpoint
             if self.checkpoint.should_save_checkpoint():
                 self.checkpoint.save_model_checkpoint(self.model, self.tokenizer, self.optimizer)
                 self.checkpoint.save_state()
             
-            # Advance progress
             self.checkpoint.advance_progress()
             self.checkpoint.save_state()
         
@@ -923,51 +855,22 @@ class ProgressiveULDTrainer:
         print(f"💾 Final model saved to {final_dir}")
         print(f"📊 Training Summary: {summary}")
 
-# -------------------------------
-# Enhanced Main Execution
-# -------------------------------
-
 if __name__ == "__main__":
-    print("🚀 Enhanced ULD Trainer with Multi-Dataset Support & Non-Disruptive Archiving")
+    print("🚀 Enhanced ULD Trainer with Multi-Dataset Support & Clear Logging")
     print("=" * 60)
     
-    # Verify Together AI API key
     if not os.getenv('TOGETHER_API_KEY'):
         print("❌ Please set TOGETHER_API_KEY environment variable")
         print("   export TOGETHER_API_KEY='your_api_key_here'")
         exit(1)
     
-    # Create trainer first (loads existing progress if available)
     trainer = ProgressiveULDTrainer()
     
-    # Show training status if resuming
     if Path("./distillation_checkpoints/training_state.json").exists():
         print("\n📂 Existing training progress found!")
         trainer.checkpoint.print_status()
-        
-        # Check if progress seems reset and offer manual restoration
-        if trainer.checkpoint.state['current_phase'] == 1 and trainer.checkpoint.state['current_example'] == 0:
-            if trainer.checkpoint.state['total_examples_processed'] > 0:
-                print("\n⚠️  Progress appears to have been reset despite having processed examples!")
-                restore = input("Do you want to manually restore your progress? (y/n): ").strip().lower()
-                if restore == 'y':
-                    try:
-                        phase = int(input("Enter your current phase: "))
-                        example = int(input("Enter your current example: "))
-                        epoch = int(input("Enter your current epoch (default 1): ") or "1")
-                        
-                        trainer.checkpoint.state['current_phase'] = phase
-                        trainer.checkpoint.state['current_example'] = example  
-                        trainer.checkpoint.state['current_epoch'] = epoch
-                        trainer.checkpoint.save_state()
-                        
-                        print(f"✅ Progress restored to Phase {phase}, Example {example}, Epoch {epoch}")
-                    except ValueError:
-                        print("❌ Invalid input, continuing with current progress")
-        
-        print("You can continue with the same progress on a new dataset of your choice.\n")
+        print("Trained model will continue with new dataset's phase structure.\n")
     
-    # Always show dataset selection (even when resuming)
     dataset_choice = DatasetManager.show_dataset_menu()
     examples, dataset_name = DatasetManager.load_dataset(dataset_choice)
     
@@ -979,5 +882,4 @@ if __name__ == "__main__":
     print(f"📊 Total Examples Available: {len(examples):,}")
     print(f"📊 Dataset Size for Training: {len(examples):,} examples")
     
-    # Run training (will update dataset config and continue from current progress)
     trainer.run_training(examples, dataset_name)
