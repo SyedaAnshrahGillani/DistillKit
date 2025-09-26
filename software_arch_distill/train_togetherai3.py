@@ -2,6 +2,7 @@
 Enhanced ULD Distillation with Multiple Dataset Support - Together AI Version
 Uses Together AI API with Kimi K2 model for teacher logits
 Now supports multiple datasets with dynamic phase generation
+FIXED: Preserves training progress across dataset switches
 """
 
 import os
@@ -274,25 +275,67 @@ class DistillationCheckpoint:
             }
     
     def update_dataset_config(self, dataset_name: str, dataset_size: int):
-        """Update state for new dataset"""
+        """Update state for new dataset while preserving training progress"""
         if self.state.get("current_dataset") != dataset_name:
             print(f"📋 Switching to new dataset: {dataset_name}")
             
             # Calculate dynamic phases for new dataset
             phases, epochs, learning_rates = DatasetManager.calculate_dynamic_phases(dataset_size)
             
+            # ✅ PRESERVE existing training progress
+            current_phase = self.state.get("current_phase", 1)
+            current_example = self.state.get("current_example", 0)
+            current_epoch = self.state.get("current_epoch", 1)
+            
+            print(f"🔄 Continuing from existing progress: Phase {current_phase}, Example {current_example}, Epoch {current_epoch}")
+            
+            # Update only dataset-specific information, preserve progress
             self.state.update({
                 "current_dataset": dataset_name,
                 "dataset_size": dataset_size,
                 "phase_sizes": phases,
                 "epochs_per_phase": epochs,
                 "learning_rates": learning_rates,
-                "current_phase": 1,
-                "current_example": 0,
-                "current_epoch": 1
+                # ✅ Keep existing progress instead of resetting
+                "current_phase": current_phase,
+                "current_example": current_example,
+                "current_epoch": current_epoch
             })
             
+            # ✅ Additional validation: ensure phase doesn't exceed new dataset phases
+            if current_phase > len(phases):
+                print(f"⚠️  Current phase {current_phase} exceeds new dataset phases {len(phases)}")
+                print("🔄 Adjusting to final phase of new dataset")
+                self.state["current_phase"] = len(phases)
+                self.state["current_example"] = 0
+                self.state["current_epoch"] = 1
+            
+            # ✅ Validate current example doesn't exceed current phase size
+            elif current_example >= phases[current_phase - 1]:
+                print(f"⚠️  Current example {current_example} exceeds phase size {phases[current_phase - 1]}")
+                print("🔄 Moving to next epoch or phase")
+                
+                # Check if we can advance to next epoch in same phase
+                if current_epoch < epochs[current_phase - 1]:
+                    self.state["current_epoch"] = current_epoch + 1
+                    self.state["current_example"] = 0
+                    print(f"📚 Advanced to Epoch {self.state['current_epoch']} of Phase {current_phase}")
+                else:
+                    # Move to next phase if available
+                    if current_phase < len(phases):
+                        self.state["current_phase"] = current_phase + 1
+                        self.state["current_example"] = 0
+                        self.state["current_epoch"] = 1
+                        print(f"🚀 Advanced to Phase {self.state['current_phase']}")
+                    else:
+                        # Training complete
+                        self.state["current_phase"] = len(phases) + 1
+                        print("🎉 Training appears to be complete!")
+            
             self.save_state()
+            print(f"✅ Dataset configuration updated, training will continue from saved progress")
+        else:
+            print(f"📋 Same dataset selected: {dataset_name} - continuing with existing progress")
     
     def save_state(self):
         """Save current training state"""
@@ -514,15 +557,22 @@ class DistillationCheckpoint:
         return self.state["current_phase"] > len(self.state["phase_sizes"])
     
     def get_current_examples(self, all_examples: List[Dict]) -> List[Dict]:
-        """Get examples for current phase"""
+        """Get examples for current phase - works across different datasets"""
         if self.is_training_complete():
             return []
         
-        phase_size = self.state["phase_sizes"][self.state["current_phase"] - 1]
-        return all_examples[:phase_size]
+        current_phase = self.state["current_phase"]
+        phase_size = self.state["phase_sizes"][current_phase - 1]
+        
+        # ✅ Handle case where new dataset is smaller than phase size
+        effective_phase_size = min(phase_size, len(all_examples))
+        
+        print(f"📊 Phase {current_phase}: Using {effective_phase_size} examples (requested: {phase_size}, available: {len(all_examples)})")
+        
+        return all_examples[:effective_phase_size]
     
     def print_status(self):
-        """Print current training status"""
+        """Print current training status with dataset information"""
         if self.is_training_complete():
             print("🎉 Training Complete!")
             return
@@ -532,7 +582,15 @@ class DistillationCheckpoint:
         current_phase = self.state["current_phase"]
         current_example = self.state["current_example"]
         current_epoch = self.state["current_epoch"]
-        phase_size = self.state["phase_sizes"][current_phase - 1]
+        
+        # Handle case where phase might exceed available phases (edge case)
+        if current_phase <= len(self.state["phase_sizes"]):
+            phase_size = self.state["phase_sizes"][current_phase - 1]
+            epochs_for_phase = self.state["epochs_per_phase"][current_phase - 1]
+        else:
+            phase_size = "N/A"
+            epochs_for_phase = "N/A"
+        
         total_processed = self.state["total_examples_processed"]
         api_calls = self.state["api_calls_made"]
         estimated_cost = self.state["estimated_cost"]
@@ -541,7 +599,7 @@ class DistillationCheckpoint:
         print(f"\n📊 Training Status:")
         print(f"   Dataset: {current_dataset} ({dataset_size:,} total examples)")
         print(f"   Phase: {current_phase}/{len(self.state['phase_sizes'])}")
-        print(f"   Epoch: {current_epoch}/{self.state['epochs_per_phase'][current_phase-1]}")
+        print(f"   Epoch: {current_epoch}/{epochs_for_phase}")
         print(f"   Example: {current_example}/{phase_size}")
         print(f"   Total Processed: {total_processed}")
         print(f"   API Calls: {api_calls}")
@@ -554,6 +612,8 @@ class DistillationCheckpoint:
         
         if self.state["last_saved"]:
             print(f"   Last Saved: {self.state['last_saved']}")
+        
+        print(f"   Progress will continue regardless of dataset selection ✅")
 
 class ProgressiveULDTrainer:
     """Enhanced Progressive ULD trainer with multi-dataset support"""
