@@ -1,8 +1,7 @@
 """
-Enhanced ULD Distillation with Multiple Dataset Support - Together AI Version
+Enhanced ULD Distillation with Per-Dataset Progress Tracking
 Uses Together AI API with Kimi K2 model for teacher logits
-Now supports multiple datasets with dynamic phase generation
-FINAL VERSION: Clear logging and proper dataset curriculum management
+Each dataset maintains separate progress while sharing model weights
 """
 
 import os
@@ -28,28 +27,16 @@ class DatasetManager:
             "repo_id": "ajibawa-2023/Software-Architecture",
             "filename": "Software_Architecture_Final.jsonl",
             "format": "jsonl",
-            "description": "Public software architecture Q&A dataset - 400k examples"
+            "description": "Public software architecture Q&A dataset - 400k examples",
+            "dataset_key": "software_architecture"
         },
         "2": {
             "name": "Cloud Dataset by Hamed (Public JSON)",
             "repo_id": "Anshrah/Cloud-Dataset-byHamed",
             "filename": "dataset.json",
             "format": "json",
-            "description": "Cloud dataset shared by hamed"
-        },
-        "3": {
-            "name": "Private JSON Dataset (Not defined-don't select)",
-            "repo_id": None,
-            "filename": None,
-            "format": "json", 
-            "description": "Private JSON dataset loaded from local file"
-        },
-        "4": {
-            "name": "Private JSONL Dataset (Not defined-don't select)",
-            "repo_id": None,
-            "filename": None, 
-            "format": "jsonl",
-            "description": "Private JSONL dataset loaded from local file"
+            "description": "Cloud dataset shared by hamed",
+            "dataset_key": "cloud_dataset_hamed"
         }
     }
     
@@ -68,105 +55,54 @@ class DatasetManager:
         
         while True:
             try:
-                choice = input("Select dataset (1-4): ").strip()
+                choice = input("Select dataset (1-2): ").strip()
                 if choice in DatasetManager.AVAILABLE_DATASETS:
                     return choice
                 else:
-                    print("❌ Invalid choice. Please select 1, 2, 3, or 4.")
+                    print("❌ Invalid choice. Please select 1 or 2.")
             except KeyboardInterrupt:
                 print("\n👋 Training cancelled.")
                 exit(0)
     
     @staticmethod
-    def load_dataset(choice: str) -> Tuple[List[Dict], str]:
-        """Load selected dataset and return examples with dataset info"""
+    def load_dataset(choice: str) -> Tuple[List[Dict], str, str]:
+        """Load selected dataset and return examples with dataset info and key"""
         dataset_config = DatasetManager.AVAILABLE_DATASETS[choice]
         dataset_name = dataset_config["name"]
+        dataset_key = dataset_config["dataset_key"]
         
-        if choice in ["1", "2"]:
-            # Public HuggingFace datasets
-            from huggingface_hub import hf_hub_download
-            
-            file_path = hf_hub_download(
-                repo_id=dataset_config["repo_id"],
-                filename=dataset_config["filename"],
-                repo_type="dataset"
-            )
-            
-            examples = []
-            
-            if dataset_config["format"] == "jsonl":
-                # JSONL format
-                with open(file_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        try:
-                            examples.append(json.loads(line.strip()))
-                        except json.JSONDecodeError:
-                            continue
-            else:
-                # JSON format
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        examples = data
-                    else:
-                        print("❌ JSON file should contain a list of objects.")
-                        return [], ""
-            
-            print(f"✅ Loaded {len(examples):,} examples from {dataset_name}")
-            print(f"📊 Total Dataset Size: {len(examples):,} examples")
-            return examples, dataset_name
-            
-        elif choice in ["3", "4"]:
-            # Private local datasets
-            print(f"\n📁 Loading Private {dataset_config['format'].upper()} Dataset from Local File")
-            
-            while True:
-                if choice == "3":
-                    file_path = input("Enter path to your private JSON file: ").strip()
+        # Public HuggingFace datasets
+        from huggingface_hub import hf_hub_download
+        
+        file_path = hf_hub_download(
+            repo_id=dataset_config["repo_id"],
+            filename=dataset_config["filename"],
+            repo_type="dataset"
+        )
+        
+        examples = []
+        
+        if dataset_config["format"] == "jsonl":
+            # JSONL format
+            with open(file_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        examples.append(json.loads(line.strip()))
+                    except json.JSONDecodeError:
+                        continue
+        else:
+            # JSON format
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    examples = data
                 else:
-                    file_path = input("Enter path to your private JSONL file: ").strip()
-                
-                if not os.path.exists(file_path):
-                    print("❌ File not found. Please check the path.")
-                    continue
-                
-                try:
-                    examples = []
-                    
-                    if choice == "3":  # JSON format
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                examples = data
-                            else:
-                                print("❌ JSON file should contain a list of objects.")
-                                continue
-                    
-                    else:  # JSONL format
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            for line in f:
-                                try:
-                                    examples.append(json.loads(line.strip()))
-                                except json.JSONDecodeError:
-                                    continue
-                    
-                    if not examples:
-                        print("❌ No valid examples found in file.")
-                        continue
-                    
-                    # Validate format
-                    if not DatasetManager.validate_dataset_format(examples):
-                        continue
-                    
-                    dataset_name = f"Private {dataset_config['format'].upper()} ({os.path.basename(file_path)})"
-                    print(f"✅ Loaded {len(examples):,} examples from private {dataset_name}")
-                    print(f"📊 Total Dataset Size: {len(examples):,} examples")
-                    return examples, dataset_name
-                    
-                except Exception as e:
-                    print(f"❌ Error loading private file: {e}")
-                    continue
+                    print("❌ JSON file should contain a list of objects.")
+                    return [], "", ""
+        
+        print(f"✅ Loaded {len(examples):,} examples from {dataset_name}")
+        print(f"📊 Total Dataset Size: {len(examples):,} examples")
+        return examples, dataset_name, dataset_key
     
     @staticmethod
     def validate_dataset_format(examples: List[Dict]) -> bool:
@@ -219,7 +155,7 @@ class DatasetManager:
         return phases, epochs, learning_rates
 
 class DistillationCheckpoint:
-    """Enhanced checkpoint management with multi-dataset support and archiving"""
+    """Enhanced checkpoint management with per-dataset progress tracking"""
     
     def __init__(self, checkpoint_dir: str = "./distillation_checkpoints"):
         self.checkpoint_dir = Path(checkpoint_dir)
@@ -229,7 +165,6 @@ class DistillationCheckpoint:
         self.state_file = self.checkpoint_dir / "training_state.json"
         self.model_dir = self.checkpoint_dir / "model"
         self.optimizer_file = self.checkpoint_dir / "optimizer.pt"
-        self.progress_file = self.checkpoint_dir / "progress.json"
         self.cache_dir = self.checkpoint_dir / "teacher_cache"
         self.archive_dir = self.checkpoint_dir / "teacher_archive"
         self.cache_dir.mkdir(exist_ok=True)
@@ -237,6 +172,9 @@ class DistillationCheckpoint:
         
         # Initialize state
         self.state = self.load_state()
+        
+        # Current dataset being worked on
+        self.current_dataset_key = None
     
     def load_state(self) -> Dict[str, Any]:
         """Load training state or create new one"""
@@ -244,58 +182,157 @@ class DistillationCheckpoint:
             print(f"📂 Loading existing training state from {self.state_file}")
             with open(self.state_file, 'r') as f:
                 state = json.load(f)
-                dataset_name = state.get('current_dataset', 'Unknown')
-                print(f"🔄 Resuming from: Dataset '{dataset_name}', "
-                      f"Phase {state['current_phase']}, Example {state['current_example']}")
+                print(f"🔄 Found training history for multiple datasets")
                 return state
         else:
             print("🆕 Creating new training state")
             return {
                 "created_at": datetime.now().isoformat(),
-                "current_dataset": None,
+                "global_stats": {
+                    "total_examples_processed": 0,
+                    "successful_batches": 0,
+                    "total_loss": 0.0,
+                    "api_calls_made": 0,
+                    "estimated_cost": 0.0,
+                    "archived_responses": 0
+                },
+                "datasets": {},  # Per-dataset progress tracking
+                "training_history": [],
+                "last_saved": None
+            }
+    
+    def migrate_legacy_state(self):
+        """Migrate from old single-dataset format to new per-dataset format"""
+        # Check if this is legacy format (has current_dataset, current_phase etc. at root level)
+        if "current_dataset" in self.state and "datasets" not in self.state:
+            print("🔄 Migrating legacy training state to per-dataset format...")
+            
+            # Extract legacy data
+            legacy_data = {
+                "current_dataset": self.state.get("current_dataset", "Unknown"),
+                "dataset_size": self.state.get("dataset_size", 0),
+                "current_phase": self.state.get("current_phase", 1),
+                "current_example": self.state.get("current_example", 0),
+                "current_epoch": self.state.get("current_epoch", 1),
+                "phase_sizes": self.state.get("phase_sizes", [10, 50, 200, 1000]),
+                "epochs_per_phase": self.state.get("epochs_per_phase", [1, 2, 2, 3]),
+                "learning_rates": self.state.get("learning_rates", [5e-6, 3e-6, 2e-6, 5e-6])
+            }
+            
+            # Create new structure
+            new_state = {
+                "created_at": self.state.get("created_at", datetime.now().isoformat()),
+                "global_stats": {
+                    "total_examples_processed": self.state.get("total_examples_processed", 0),
+                    "successful_batches": self.state.get("successful_batches", 0),
+                    "total_loss": self.state.get("total_loss", 0.0),
+                    "api_calls_made": self.state.get("api_calls_made", 0),
+                    "estimated_cost": self.state.get("estimated_cost", 0.0),
+                    "archived_responses": self.state.get("archived_responses", 0)
+                },
+                "datasets": {},
+                "training_history": self.state.get("training_history", []),
+                "last_saved": self.state.get("last_saved")
+            }
+            
+            # Try to map legacy data to dataset key based on characteristics
+            # If we have significant progress, assume it's dataset 1 (Software Architecture)
+            if legacy_data["current_phase"] > 1 or legacy_data["current_example"] > 0:
+                dataset_key = "software_architecture"  # Default to dataset 1
+                new_state["datasets"][dataset_key] = {
+                    "dataset_name": "Software Architecture (Legacy Migration)",
+                    "dataset_size": legacy_data["dataset_size"],
+                    "current_phase": legacy_data["current_phase"],
+                    "current_example": legacy_data["current_example"],
+                    "current_epoch": legacy_data["current_epoch"],
+                    "phase_sizes": legacy_data["phase_sizes"],
+                    "epochs_per_phase": legacy_data["epochs_per_phase"],
+                    "learning_rates": legacy_data["learning_rates"],
+                    "last_trained": self.state.get("last_saved"),
+                    "examples_processed": 0  # Will be calculated
+                }
+                print(f"✅ Migrated progress to dataset '{dataset_key}'")
+                print(f"   Phase: {legacy_data['current_phase']}, Example: {legacy_data['current_example']}")
+            
+            # Replace old state
+            self.state = new_state
+            self.save_state()
+            print("✅ Migration completed successfully")
+    
+    def get_dataset_progress(self, dataset_key: str) -> Dict[str, Any]:
+        """Get progress for specific dataset"""
+        if dataset_key not in self.state["datasets"]:
+            return {
+                "dataset_name": "Unknown",
                 "dataset_size": 0,
                 "current_phase": 1,
                 "current_example": 0,
                 "current_epoch": 1,
-                "total_examples_processed": 0,
-                "successful_batches": 0,
-                "total_loss": 0.0,
                 "phase_sizes": [10, 50, 200, 1000],
                 "epochs_per_phase": [1, 2, 2, 3],
                 "learning_rates": [5e-6, 3e-6, 2e-6, 5e-6],
-                "training_history": [],
-                "validation_history": [],
-                "last_saved": None,
-                "api_calls_made": 0,
-                "estimated_cost": 0.0
+                "last_trained": None,
+                "examples_processed": 0
             }
+        return self.state["datasets"][dataset_key]
     
-    def update_dataset_config(self, dataset_name: str, dataset_size: int):
-        """Update dataset configuration and reset phase progression for new curriculum"""
-        # Calculate dynamic phases for new dataset
-        phases, epochs, learning_rates = DatasetManager.calculate_dynamic_phases(dataset_size)
+    def update_dataset_config(self, dataset_key: str, dataset_name: str, dataset_size: int):
+        """Update dataset configuration and switch to it"""
+        # Migrate legacy state first if needed
+        if "current_dataset" in self.state:
+            self.migrate_legacy_state()
         
-        # Update dataset configuration
-        print(f"📋 Updating dataset configuration: {dataset_name}")
-        self.state["current_dataset"] = dataset_name
-        self.state["dataset_size"] = dataset_size
-        self.state["phase_sizes"] = phases
-        self.state["epochs_per_phase"] = epochs
-        self.state["learning_rates"] = learning_rates
+        self.current_dataset_key = dataset_key
         
-        # Reset phase progression for new dataset curriculum
-        # Model weights and training history are preserved
-        print(f"🔄 Starting new dataset curriculum (model knowledge preserved)")
+        # Check if this dataset exists
+        if dataset_key in self.state["datasets"]:
+            dataset_progress = self.state["datasets"][dataset_key]
+            print(f"📋 Resuming dataset: {dataset_name}")
+            print(f"🔄 Progress: Phase {dataset_progress['current_phase']}, "
+                  f"Example {dataset_progress['current_example']}, "
+                  f"Epoch {dataset_progress['current_epoch']}")
+            
+            # Update dataset size in case it changed
+            self.state["datasets"][dataset_key]["dataset_size"] = dataset_size
+            
+        else:
+            # New dataset - create fresh progress
+            phases, epochs, learning_rates = DatasetManager.calculate_dynamic_phases(dataset_size)
+            
+            self.state["datasets"][dataset_key] = {
+                "dataset_name": dataset_name,
+                "dataset_size": dataset_size,
+                "current_phase": 1,
+                "current_example": 0,
+                "current_epoch": 1,
+                "phase_sizes": phases,
+                "epochs_per_phase": epochs,
+                "learning_rates": learning_rates,
+                "last_trained": None,
+                "examples_processed": 0
+            }
+            
+            print(f"📋 New dataset initialized: {dataset_name}")
+            print(f"🔄 Starting from Phase 1, Example 0")
         
         self.save_state()
+    
+    def get_current_progress(self) -> Dict[str, Any]:
+        """Get progress for currently active dataset"""
+        if not self.current_dataset_key:
+            return self.get_dataset_progress("unknown")
+        return self.get_dataset_progress(self.current_dataset_key)
     
     def save_state(self):
         """Save current training state"""
         self.state["last_saved"] = datetime.now().isoformat()
         with open(self.state_file, 'w') as f:
             json.dump(self.state, f, indent=2)
-        print(f"💾 State saved: Dataset '{self.state.get('current_dataset', 'Unknown')}', "
-              f"Phase {self.state['current_phase']}, Example {self.state['current_example']}")
+        
+        current_progress = self.get_current_progress()
+        print(f"💾 State saved: Dataset '{current_progress.get('dataset_name', 'Unknown')}', "
+              f"Phase {current_progress.get('current_phase', 1)}, "
+              f"Example {current_progress.get('current_example', 0)}")
     
     def save_model_checkpoint(self, model, tokenizer, optimizer):
         """Save model, tokenizer, and optimizer state"""
@@ -322,9 +359,11 @@ class DistillationCheckpoint:
                 torch_dtype=torch.bfloat16
             )
             
-            current_phase = self.state.get("current_phase", 1)
-            lr_index = min(current_phase - 1, len(self.state["learning_rates"]) - 1)
-            lr = self.state["learning_rates"][lr_index]
+            current_progress = self.get_current_progress()
+            current_phase = current_progress.get("current_phase", 1)
+            learning_rates = current_progress.get("learning_rates", [5e-6])
+            lr_index = min(current_phase - 1, len(learning_rates) - 1)
+            lr = learning_rates[lr_index]
             optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
             
             if self.optimizer_file.exists():
@@ -346,41 +385,14 @@ class DistillationCheckpoint:
                 torch_dtype=torch.bfloat16
             )
             
-            current_phase = self.state.get("current_phase", 1)
-            lr_index = min(current_phase - 1, len(self.state["learning_rates"]) - 1)
-            lr = self.state["learning_rates"][lr_index]
+            current_progress = self.get_current_progress()
+            current_phase = current_progress.get("current_phase", 1)
+            learning_rates = current_progress.get("learning_rates", [5e-6])
+            lr_index = min(current_phase - 1, len(learning_rates) - 1)
+            lr = learning_rates[lr_index]
             optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
             
             return model, tokenizer, optimizer
-    
-    def archive_teacher_response_safe(self, prompt: str, response: Dict):
-        """Archive teacher responses permanently - completely non-disruptive"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            cache_key = str(abs(hash(prompt)))
-            
-            archive_data = {
-                "timestamp": datetime.now().isoformat(),
-                "prompt": prompt,
-                "response": response,
-                "dataset": self.state.get("current_dataset", "unknown"),
-                "phase": self.state.get("current_phase", 0),
-                "example": self.state.get("current_example", 0)
-            }
-            
-            archive_file = self.archive_dir / f"teacher_response_{timestamp}_{cache_key[:8]}.json"
-            with open(archive_file, 'w', encoding='utf-8') as f:
-                json.dump(archive_data, f, indent=2, ensure_ascii=False)
-            
-            try:
-                if "archived_responses" not in self.state:
-                    self.state["archived_responses"] = 0
-                self.state["archived_responses"] += 1
-            except:
-                pass
-                
-        except Exception as e:
-            pass
     
     def get_teacher_response_cached(self, prompt: str) -> Dict:
         """Cached teacher responses with non-disruptive archiving"""
@@ -398,10 +410,8 @@ class DistillationCheckpoint:
         with open(cache_file, 'w') as f:
             json.dump(response, f)
         
-        self.archive_teacher_response_safe(prompt, response)
-        
-        self.state["api_calls_made"] += 1
-        self.state["estimated_cost"] += 0.010  # Updated cost estimate for 1024 token calls
+        self.state["global_stats"]["api_calls_made"] += 1
+        self.state["global_stats"]["estimated_cost"] += 0.010
         
         return response
     
@@ -421,7 +431,7 @@ class DistillationCheckpoint:
         payload = {
             "model": "moonshotai/Kimi-K2-Instruct-0905",
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 1024,  # Increased for longer, more detailed teacher responses
+            "max_tokens": 1024,
             "temperature": 0.0,
             "logprobs": 20,
             "echo": False,
@@ -442,134 +452,158 @@ class DistillationCheckpoint:
     
     def log_progress(self, loss: float, mode: str, validation_results: Dict = None):
         """Log training progress"""
+        current_progress = self.get_current_progress()
+        
         progress_entry = {
             "timestamp": datetime.now().isoformat(),
-            "dataset": self.state.get("current_dataset", "unknown"),
-            "phase": self.state["current_phase"],
-            "example": self.state["current_example"],
-            "epoch": self.state["current_epoch"],
+            "dataset_key": self.current_dataset_key,
+            "dataset": current_progress.get("dataset_name", "unknown"),
+            "phase": current_progress.get("current_phase", 1),
+            "example": current_progress.get("current_example", 0),
+            "epoch": current_progress.get("current_epoch", 1),
             "loss": loss,
             "mode": mode,
-            "total_examples_processed": self.state["total_examples_processed"],
+            "total_examples_processed": self.state["global_stats"]["total_examples_processed"],
             "validation": validation_results
         }
         
         self.state["training_history"].append(progress_entry)
-        self.state["total_loss"] += loss
-        self.state["successful_batches"] += 1
+        self.state["global_stats"]["total_loss"] += loss
+        self.state["global_stats"]["successful_batches"] += 1
         
         if len(self.state["training_history"]) > 1000:
             self.state["training_history"] = self.state["training_history"][-1000:]
     
     def should_validate(self) -> bool:
         """Determine if we should run validation"""
-        return self.state["current_example"] % 20 == 0
+        current_progress = self.get_current_progress()
+        return current_progress.get("current_example", 0) % 20 == 0
     
     def should_save_checkpoint(self) -> bool:
         """Determine if we should save checkpoint"""
-        return self.state["current_example"] % 30 == 0
+        current_progress = self.get_current_progress()
+        return current_progress.get("current_example", 0) % 30 == 0
     
     def advance_progress(self):
-        """Advance to next example/epoch/phase"""
-        self.state["current_example"] += 1
-        self.state["total_examples_processed"] += 1
+        """Advance to next example/epoch/phase for current dataset"""
+        if not self.current_dataset_key:
+            return
         
-        current_phase_size = self.state["phase_sizes"][self.state["current_phase"] - 1]
-        epochs_for_phase = self.state["epochs_per_phase"][self.state["current_phase"] - 1]
+        dataset_progress = self.state["datasets"][self.current_dataset_key]
         
-        if self.state["current_example"] >= current_phase_size:
-            if self.state["current_epoch"] >= epochs_for_phase:
-                self.state["current_phase"] += 1
-                self.state["current_example"] = 0
-                self.state["current_epoch"] = 1
-                print(f"🚀 Advanced to Phase {self.state['current_phase']}")
+        dataset_progress["current_example"] += 1
+        dataset_progress["examples_processed"] += 1
+        self.state["global_stats"]["total_examples_processed"] += 1
+        
+        current_phase_size = dataset_progress["phase_sizes"][dataset_progress["current_phase"] - 1]
+        epochs_for_phase = dataset_progress["epochs_per_phase"][dataset_progress["current_phase"] - 1]
+        
+        if dataset_progress["current_example"] >= current_phase_size:
+            if dataset_progress["current_epoch"] >= epochs_for_phase:
+                dataset_progress["current_phase"] += 1
+                dataset_progress["current_example"] = 0
+                dataset_progress["current_epoch"] = 1
+                print(f"🚀 Advanced to Phase {dataset_progress['current_phase']}")
                 self.update_optimizer_lr()
             else:
-                self.state["current_epoch"] += 1
-                self.state["current_example"] = 0
-                print(f"📚 Advanced to Epoch {self.state['current_epoch']} of Phase {self.state['current_phase']}")
+                dataset_progress["current_epoch"] += 1
+                dataset_progress["current_example"] = 0
+                print(f"📚 Advanced to Epoch {dataset_progress['current_epoch']} of Phase {dataset_progress['current_phase']}")
+        
+        dataset_progress["last_trained"] = datetime.now().isoformat()
     
     def update_optimizer_lr(self):
         """Update optimizer learning rate for current phase"""
         if hasattr(self, 'current_optimizer'):
-            current_phase = self.state["current_phase"]
-            if current_phase <= len(self.state["learning_rates"]):
-                new_lr = self.state["learning_rates"][current_phase - 1]
+            current_progress = self.get_current_progress()
+            current_phase = current_progress.get("current_phase", 1)
+            learning_rates = current_progress.get("learning_rates", [5e-6])
+            
+            if current_phase <= len(learning_rates):
+                new_lr = learning_rates[current_phase - 1]
                 for param_group in self.current_optimizer.param_groups:
                     param_group['lr'] = new_lr
                 print(f"📊 Updated learning rate to {new_lr}")
     
     def is_training_complete(self) -> bool:
-        """Check if training is complete"""
-        return self.state["current_phase"] > len(self.state["phase_sizes"])
+        """Check if training is complete for current dataset"""
+        current_progress = self.get_current_progress()
+        current_phase = current_progress.get("current_phase", 1)
+        phase_sizes = current_progress.get("phase_sizes", [])
+        return current_phase > len(phase_sizes)
     
     def get_current_examples(self, all_examples: List[Dict]) -> List[Dict]:
         """Get examples for current phase"""
         if self.is_training_complete():
             return []
         
-        current_phase = self.state["current_phase"]
-        phase_size = self.state["phase_sizes"][current_phase - 1]
+        current_progress = self.get_current_progress()
+        current_phase = current_progress.get("current_phase", 1)
+        phase_sizes = current_progress.get("phase_sizes", [])
+        
+        if current_phase > len(phase_sizes):
+            return []
+        
+        phase_size = phase_sizes[current_phase - 1]
         effective_phase_size = min(phase_size, len(all_examples))
         
-        print(f"📊 Phase {current_phase}: Using {effective_phase_size} examples (requested: {phase_size}, available: {len(all_examples)})")
+        print(f"📊 Phase {current_phase}: Using {effective_phase_size} examples "
+              f"(requested: {phase_size}, available: {len(all_examples)})")
         
         return all_examples[:effective_phase_size]
     
     def print_status(self):
-        """Print current training status with clear dataset vs checkpoint distinction"""
-        if self.is_training_complete():
-            print("🎉 Training Complete!")
-            return
-        
-        current_dataset = self.state.get("current_dataset", "Unknown")
-        dataset_size = self.state.get("dataset_size", 0)
-        current_phase = self.state["current_phase"]
-        current_example = self.state["current_example"]
-        current_epoch = self.state["current_epoch"]
-        
-        if current_phase <= len(self.state["phase_sizes"]):
-            phase_size = self.state["phase_sizes"][current_phase - 1]
-            epochs_for_phase = self.state["epochs_per_phase"][current_phase - 1]
-        else:
-            phase_size = "N/A"
-            epochs_for_phase = "N/A"
-        
-        total_processed = self.state["total_examples_processed"]
-        api_calls = self.state["api_calls_made"]
-        estimated_cost = self.state["estimated_cost"]
-        archived_responses = self.state.get("archived_responses", 0)
-        
+        """Print current training status with per-dataset breakdown"""
         print(f"\n📊 Training Status:")
-        print(f"   🗂️  Current Dataset: {current_dataset} ({dataset_size:,} examples)")
-        print(f"   📈 Dataset Phase Progress: {current_phase}/{len(self.state['phase_sizes'])} (Phase {phase_size} examples)")
-        print(f"   📚 Current Epoch: {current_epoch}/{epochs_for_phase}")
-        print(f"   📝 Current Example: {current_example}/{phase_size}")
-        print(f"")
-        print(f"   🧠 Model Checkpoint Status:")
-        print(f"   ✅ Total Historical Training: {total_processed} examples across all datasets")
-        print(f"   ✅ Model weights preserved from previous training")
-        print(f"   ✅ API Calls Made: {api_calls}")
-        if archived_responses > 0:
-            print(f"   ✅ Archived Responses: {archived_responses}")
-        print(f"   ✅ Estimated Cost: ${estimated_cost:.2f}")
         
-        if self.state["successful_batches"] > 0:
-            avg_loss = self.state["total_loss"] / self.state["successful_batches"]
+        # Global stats
+        global_stats = self.state["global_stats"]
+        print(f"   🌍 Global Progress:")
+        print(f"   ✅ Total Examples Processed: {global_stats['total_examples_processed']}")
+        print(f"   ✅ API Calls Made: {global_stats['api_calls_made']}")
+        print(f"   ✅ Estimated Cost: ${global_stats['estimated_cost']:.2f}")
+        
+        if global_stats['successful_batches'] > 0:
+            avg_loss = global_stats['total_loss'] / global_stats['successful_batches']
             print(f"   ✅ Average Loss: {avg_loss:.4f}")
         
-        if self.state["last_saved"]:
-            print(f"   💾 Last Saved: {self.state['last_saved']}")
-        
-        print(f"")
-        print(f"   🔄 Note: Using trained model from {total_processed} examples with new dataset's phase structure")
+        # Per-dataset breakdown
+        print(f"\n   📂 Dataset Progress:")
+        for dataset_key, progress in self.state["datasets"].items():
+            status_icon = "🔄" if dataset_key == self.current_dataset_key else "📋"
+            print(f"   {status_icon} {progress['dataset_name']} ({progress['dataset_size']:,} examples)")
+            print(f"      Phase: {progress['current_phase']}/{len(progress['phase_sizes'])}, "
+                  f"Example: {progress['current_example']}, "
+                  f"Epoch: {progress['current_epoch']}")
+            if progress['last_trained']:
+                print(f"      Last trained: {progress['last_trained']}")
+            
+        # Current dataset detailed status
+        if self.current_dataset_key:
+            current_progress = self.get_current_progress()
+            print(f"\n   🎯 Current Dataset Details:")
+            print(f"   Dataset: {current_progress['dataset_name']}")
+            
+            if current_progress['current_phase'] <= len(current_progress['phase_sizes']):
+                phase_size = current_progress['phase_sizes'][current_progress['current_phase'] - 1]
+                epochs_for_phase = current_progress['epochs_per_phase'][current_progress['current_phase'] - 1]
+                print(f"   Phase: {current_progress['current_phase']}/{len(current_progress['phase_sizes'])} "
+                      f"({phase_size} examples)")
+                print(f"   Epoch: {current_progress['current_epoch']}/{epochs_for_phase}")
+                print(f"   Example: {current_progress['current_example']}/{phase_size}")
+            else:
+                print(f"   🎉 Training Complete!")
 
 class ProgressiveULDTrainer:
-    """Enhanced Progressive ULD trainer with multi-dataset support"""
+    """Enhanced Progressive ULD trainer with per-dataset progress tracking"""
     
     def __init__(self, student_model_name: str = "Qwen/Qwen3-4B-Thinking-2507"):
         self.checkpoint = DistillationCheckpoint()
         self.student_model_name = student_model_name
+        
+        # Migrate legacy state if needed
+        if "current_dataset" in self.checkpoint.state:
+            self.checkpoint.migrate_legacy_state()
         
         self.model, self.tokenizer, self.optimizer = self.checkpoint.load_model_checkpoint(
             student_model_name
@@ -581,7 +615,7 @@ class ProgressiveULDTrainer:
         self.vocab_size = self.tokenizer.vocab_size
         print(f"Vocab Size: {self.vocab_size}")
         
-        print("🎯 Enhanced Progressive ULD Trainer with Multi-Dataset Support")
+        print("🎯 Enhanced Progressive ULD Trainer with Per-Dataset Progress Tracking")
         self.checkpoint.print_status()
     
     def validate_model(self) -> Dict:
@@ -717,7 +751,7 @@ class ProgressiveULDTrainer:
             tokens = logprobs_data["tokens"]
             
             logits_list = []
-            vocab_size = self.vocab_size  # Use dynamic vocab size from tokenizer
+            vocab_size = self.vocab_size
             
             for i, (token, logprob) in enumerate(zip(tokens, token_logprobs)):
                 if logprob is None:
@@ -738,7 +772,7 @@ class ProgressiveULDTrainer:
         elif "content" in logprobs_data:
             content_logprobs = logprobs_data["content"]
             logits_list = []
-            vocab_size = self.vocab_size  # Use dynamic vocab size from tokenizer
+            vocab_size = self.vocab_size
             
             for token_data in content_logprobs:
                 logits = torch.full((vocab_size,), -10.0)
@@ -761,11 +795,12 @@ class ProgressiveULDTrainer:
         
         return generated_text, torch.stack(logits_list)
     
-    def run_training(self, examples: List[Dict], dataset_name: str):
+    def run_training(self, examples: List[Dict], dataset_name: str, dataset_key: str):
         """Run complete progressive training with selected dataset"""
         print(f"🚀 Starting Progressive ULD Training on {dataset_name}")
         
-        self.checkpoint.update_dataset_config(dataset_name, len(examples))
+        # Switch to this dataset and load its progress
+        self.checkpoint.update_dataset_config(dataset_key, dataset_name, len(examples))
         
         while not self.checkpoint.is_training_complete():
             self.checkpoint.print_status()
@@ -782,7 +817,8 @@ class ProgressiveULDTrainer:
                 print("❌ Phase training failed - stopping")
                 break
             
-            print(f"✅ Phase {self.checkpoint.state['current_phase']} completed successfully")
+            current_progress = self.checkpoint.get_current_progress()
+            print(f"✅ Phase {current_progress['current_phase']} completed successfully")
         
         if self.checkpoint.is_training_complete():
             print("🎉 Training completed successfully!")
@@ -790,7 +826,8 @@ class ProgressiveULDTrainer:
     
     def train_phase(self, examples: List[Dict]) -> bool:
         """Train on current phase examples"""
-        start_idx = self.checkpoint.state["current_example"]
+        current_progress = self.checkpoint.get_current_progress()
+        start_idx = current_progress.get("current_example", 0)
         
         for i in range(start_idx, len(examples)):
             example = examples[i]
@@ -828,7 +865,8 @@ class ProgressiveULDTrainer:
     def save_final_model(self):
         """Save final trained model"""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        dataset_clean = self.checkpoint.state.get("current_dataset", "unknown").replace(" ", "_")
+        current_progress = self.checkpoint.get_current_progress()
+        dataset_clean = current_progress.get("dataset_name", "unknown").replace(" ", "_")
         final_dir = f"./qwen3-4b-uld-{dataset_clean}-{timestamp}"
         os.makedirs(final_dir, exist_ok=True)
         
@@ -838,14 +876,11 @@ class ProgressiveULDTrainer:
         summary = {
             "teacher_model": "moonshotai/Kimi-K2-Instruct-0905",
             "teacher_provider": "Together AI",
-            "dataset_used": self.checkpoint.state.get("current_dataset", "unknown"),
-            "dataset_size": self.checkpoint.state.get("dataset_size", 0),
+            "dataset_used": current_progress.get("dataset_name", "unknown"),
+            "dataset_size": current_progress.get("dataset_size", 0),
             "training_completed": datetime.now().isoformat(),
-            "total_examples_processed": self.checkpoint.state["total_examples_processed"],
-            "total_phases": len(self.checkpoint.state["phase_sizes"]),
-            "api_calls_made": self.checkpoint.state["api_calls_made"],
-            "archived_responses": self.checkpoint.state.get("archived_responses", 0),
-            "estimated_cost": self.checkpoint.state["estimated_cost"],
+            "global_stats": self.checkpoint.state["global_stats"],
+            "datasets_trained": {k: v for k, v in self.checkpoint.state["datasets"].items()},
             "final_validation": self.validate_model()
         }
         
@@ -856,7 +891,7 @@ class ProgressiveULDTrainer:
         print(f"📊 Training Summary: {summary}")
 
 if __name__ == "__main__":
-    print("🚀 Enhanced ULD Trainer with Multi-Dataset Support & Clear Logging")
+    print("🚀 Enhanced ULD Trainer with Per-Dataset Progress Tracking")
     print("=" * 60)
     
     if not os.getenv('TOGETHER_API_KEY'):
@@ -869,10 +904,10 @@ if __name__ == "__main__":
     if Path("./distillation_checkpoints/training_state.json").exists():
         print("\n📂 Existing training progress found!")
         trainer.checkpoint.print_status()
-        print("Trained model will continue with new dataset's phase structure.\n")
+        print("Each dataset maintains separate progress while sharing model weights.\n")
     
     dataset_choice = DatasetManager.show_dataset_menu()
-    examples, dataset_name = DatasetManager.load_dataset(dataset_choice)
+    examples, dataset_name, dataset_key = DatasetManager.load_dataset(dataset_choice)
     
     if not examples:
         print("❌ No examples loaded. Exiting.")
@@ -880,6 +915,5 @@ if __name__ == "__main__":
     
     print(f"\n🎯 Selected Dataset: {dataset_name}")
     print(f"📊 Total Examples Available: {len(examples):,}")
-    print(f"📊 Dataset Size for Training: {len(examples):,} examples")
     
-    trainer.run_training(examples, dataset_name)
+    trainer.run_training(examples, dataset_name, dataset_key)
