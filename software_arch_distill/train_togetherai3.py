@@ -274,35 +274,7 @@ class DistillationCheckpoint:
                 "estimated_cost": 0.0
             }
     
-    def update_dataset_config(self, dataset_name: str, dataset_size: int):
-        """Update state for new dataset while preserving training progress"""
-        if self.state.get("current_dataset") != dataset_name:
-            print(f"📋 Switching to new dataset: {dataset_name}")
-            
-            # Calculate dynamic phases for new dataset
-            phases, epochs, learning_rates = DatasetManager.calculate_dynamic_phases(dataset_size)
-            
-            # Preserve existing training progress
-            current_phase = self.state.get("current_phase", 1)
-            current_example = self.state.get("current_example", 0)
-            current_epoch = self.state.get("current_epoch", 1)
-            
-            print(f"🔄 Continuing from existing progress: Phase {current_phase}, Example {current_example}, Epoch {current_epoch}")
-            
-            # Update only dataset-specific information, preserve progress
-            self.state.update({
-                "current_dataset": dataset_name,
-                "dataset_size": dataset_size,
-                "phase_sizes": phases,
-                "epochs_per_phase": epochs,
-                "learning_rates": learning_rates,
-                # Keep existing progress instead of resetting
-                "current_phase": current_phase,
-                "current_example": current_example,
-                "current_epoch": current_epoch
-            })
-            
-            # Additional validation: ensure phase doesn't exceed new dataset phases
+ doesn't exceed new dataset phases
             if current_phase > len(phases):
                 print(f"⚠️  Current phase {current_phase} exceeds new dataset phases {len(phases)}")
                 print("🔄 Adjusting to final phase of new dataset")
@@ -588,7 +560,7 @@ class DistillationCheckpoint:
         return all_examples[:effective_phase_size]
     
     def print_status(self):
-        """Print current training status with dataset information"""
+        """Print current training status with clear dataset vs checkpoint distinction"""
         if self.is_training_complete():
             print("🎉 Training Complete!")
             return
@@ -615,24 +587,28 @@ class DistillationCheckpoint:
         archived_responses = self.state.get("archived_responses", 0)
         
         print(f"\n📊 Training Status:")
-        print(f"   Dataset: {current_dataset} ({dataset_size:,} total examples)")
-        print(f"   Phase: {current_phase}/{len(self.state['phase_sizes'])}")
-        print(f"   Epoch: {current_epoch}/{epochs_for_phase}")
-        print(f"   Example: {current_example}/{phase_size}")
-        print(f"   Total Processed: {total_processed}")
-        print(f"   API Calls: {api_calls}")
-        if archived_responses > 0:  # Only show if we have archived responses
-            print(f"   Archived Responses: {archived_responses}")
-        print(f"   Estimated Cost: ${estimated_cost:.2f}")
+        print(f"   🗂️  Current Dataset: {current_dataset} ({dataset_size:,} examples)")
+        print(f"   📈 Dataset Phase Progress: {current_phase}/{len(self.state['phase_sizes'])} (Phase {phase_size} examples)")
+        print(f"   📚 Current Epoch: {current_epoch}/{epochs_for_phase}")
+        print(f"   📝 Current Example: {current_example}/{phase_size}")
+        print(f"")
+        print(f"   🧠 Model Checkpoint Status:")
+        print(f"   ✅ Total Historical Training: {total_processed} examples across all datasets")
+        print(f"   ✅ Model weights preserved from previous training")
+        print(f"   ✅ API Calls Made: {api_calls}")
+        if archived_responses > 0:
+            print(f"   ✅ Archived Responses: {archived_responses}")
+        print(f"   ✅ Estimated Cost: ${estimated_cost:.2f}")
         
         if self.state["successful_batches"] > 0:
             avg_loss = self.state["total_loss"] / self.state["successful_batches"]
-            print(f"   Average Loss: {avg_loss:.4f}")
+            print(f"   ✅ Average Loss: {avg_loss:.4f}")
         
         if self.state["last_saved"]:
-            print(f"   Last Saved: {self.state['last_saved']}")
+            print(f"   💾 Last Saved: {self.state['last_saved']}")
         
-        print(f"   Progress will continue regardless of dataset selection ✅")
+        print(f"")
+        print(f"   🔄 Note: Using trained model from {total_processed} examples with new dataset's phase structure")
 
 class ProgressiveULDTrainer:
     """Enhanced Progressive ULD trainer with multi-dataset support"""
@@ -968,6 +944,27 @@ if __name__ == "__main__":
     if Path("./distillation_checkpoints/training_state.json").exists():
         print("\n📂 Existing training progress found!")
         trainer.checkpoint.print_status()
+        
+        # Check if progress seems reset and offer manual restoration
+        if trainer.checkpoint.state['current_phase'] == 1 and trainer.checkpoint.state['current_example'] == 0:
+            if trainer.checkpoint.state['total_examples_processed'] > 0:
+                print("\n⚠️  Progress appears to have been reset despite having processed examples!")
+                restore = input("Do you want to manually restore your progress? (y/n): ").strip().lower()
+                if restore == 'y':
+                    try:
+                        phase = int(input("Enter your current phase: "))
+                        example = int(input("Enter your current example: "))
+                        epoch = int(input("Enter your current epoch (default 1): ") or "1")
+                        
+                        trainer.checkpoint.state['current_phase'] = phase
+                        trainer.checkpoint.state['current_example'] = example  
+                        trainer.checkpoint.state['current_epoch'] = epoch
+                        trainer.checkpoint.save_state()
+                        
+                        print(f"✅ Progress restored to Phase {phase}, Example {example}, Epoch {epoch}")
+                    except ValueError:
+                        print("❌ Invalid input, continuing with current progress")
+        
         print("You can continue with the same progress on a new dataset of your choice.\n")
     
     # Always show dataset selection (even when resuming)
