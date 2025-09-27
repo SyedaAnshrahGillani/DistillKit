@@ -650,7 +650,7 @@ class ProgressiveULDTrainer:
         
         print("🎯 Enhanced Progressive ULD Trainer with GPU Acceleration")
         self.checkpoint.print_status()
-    
+
     def validate_model(self) -> Dict:
         """Validate model generation quality with GPU support"""
         test_prompts = [
@@ -676,7 +676,7 @@ class ProgressiveULDTrainer:
                     inputs.input_ids = inputs.input_ids.to(self.device)
                     inputs.attention_mask = inputs.attention_mask.to(self.device)
                 
-                        outputs = self.model.generate(
+                    outputs = self.model.generate(
                         inputs.input_ids,
                         attention_mask=inputs.attention_mask,
                         max_new_tokens=50,
