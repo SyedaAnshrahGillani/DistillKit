@@ -661,7 +661,7 @@ class ProgressiveULDTrainer:
 
         self.model.eval()
         results = {"coherent": 0, "repetitive": 0, "failed": 0}
-        
+    
         with torch.no_grad():  # Disable gradients for validation
             for prompt in test_prompts:
                 try:
@@ -671,11 +671,12 @@ class ProgressiveULDTrainer:
                         return_attention_mask=True,
                         padding=True
                     )
-                    
-                    # Move inputs to GPU
-                    inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                    
-                    outputs = self.model.generate(
+                
+                    # Move inputs to GPU - keep as BatchEncoding object
+                    inputs.input_ids = inputs.input_ids.to(self.device)
+                    inputs.attention_mask = inputs.attention_mask.to(self.device)
+                
+                        outputs = self.model.generate(
                         inputs.input_ids,
                         attention_mask=inputs.attention_mask,
                         max_new_tokens=50,
@@ -683,12 +684,12 @@ class ProgressiveULDTrainer:
                         do_sample=True,
                         pad_token_id=self.tokenizer.eos_token_id
                     )
-                    
+                
                     generated = self.tokenizer.decode(
                         outputs[0][inputs.input_ids.size(1):], 
                         skip_special_tokens=True
                     )
-                    
+                
                     words = generated.split()[:20]
                     if len(set(words)) < len(words) * 0.5:
                         results["repetitive"] += 1
@@ -696,11 +697,11 @@ class ProgressiveULDTrainer:
                         results["coherent"] += 1
                     else:
                         results["failed"] += 1
-                        
+                    
                 except Exception as e:
                     print(f"⚠️ Validation failed for prompt: {e}")
                     results["failed"] += 1
-        
+    
         return results
     
     def train_step(self, prompt: str, target: str) -> Tuple[Optional[float], str]:
